@@ -34,7 +34,7 @@ load_dotenv()
 app = FastAPI(title="Amenity Benchmark")
 
 GOOGLE_AI_KEY = os.getenv("GOOGLE_AI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
 
 if GOOGLE_AI_KEY:
     genai.configure(api_key=GOOGLE_AI_KEY)
