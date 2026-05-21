@@ -45,15 +45,12 @@
         </select>
 
         <button id="search-btn" class="btn btn-primary">Search</button>
+        <button id="analyze-btn" class="btn btn-accent" style="display:none">↻ Analyse</button>
       </div>
 
       <p id="search-hint" class="search-hint">
         AI mode: describe any location type — Gemini suggests benchmark examples worldwide and defines context-specific amenity groups.
       </p>
-    </div>
-
-    <div class="header-actions">
-      <button id="analyze-btn" class="btn btn-accent" style="display:none">↻ Analyse amenities</button>
     </div>
   </header>
 
@@ -79,7 +76,7 @@
         <div class="empty-title">No data yet</div>
         <div class="empty-text">
           Describe a location type and click <strong>Search</strong>.<br>
-          Once locations appear, click <strong>Analyse amenities</strong>.
+          Once locations appear, click <strong>Analyse</strong>.
         </div>
       </div>
 
@@ -91,8 +88,11 @@
 
       <div id="diagram-content" style="display:none">
         <div class="diagram-header">
-          <div id="diagram-title" class="diagram-title"></div>
-          <div id="diagram-subtitle" class="diagram-subtitle"></div>
+          <div class="diagram-header-text">
+            <div id="diagram-title" class="diagram-title"></div>
+            <div id="diagram-subtitle" class="diagram-subtitle"></div>
+          </div>
+          <button id="download-svg-btn" class="btn-icon" title="Download chart as SVG">⬇ SVG</button>
         </div>
         <div class="bubble-container" id="bubble-container">
           <svg id="bubble-svg"></svg>
