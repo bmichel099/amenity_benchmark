@@ -35,10 +35,9 @@ const state = {
   amenityToGroup: {},
   groupColors: {},
   map: null,
-  boundaryLayers: {},
-  labelMarkers: {},
-  amenityDotLayer: null,   // layer group for colored amenity dots on map
-  perLocCounts: [],        // [{counts:{type->n}, total:n}] per selected location
+  boundaryLayers: {},    // _id → L.geoJSON layer (has permanent tooltip bound to it)
+  amenityDotLayers: {},  // _id → L.layerGroup (per-location amenity dots)
+  perLocCounts: [],      // [{counts:{type->n}, total:n}] per selected location
 };
 
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
@@ -94,8 +93,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
 function initMap() {
   state.map = L.map('map', { center:[25,10], zoom:2, worldCopyJump:true, minZoom:1 });
-
-  // CartoDB Voyager — warm, colorful, stylish
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '© <a href="https://openstreetmap.org">OSM</a> contributors © <a href="https://carto.com">CARTO</a>',
     subdomains: 'abcd', maxZoom: 19,
@@ -110,9 +107,14 @@ function initMap() {
 function bindEvents() {
   $('mode-ai').addEventListener('click',  () => setMode('ai'));
   $('mode-osm').addEventListener('click', () => setMode('osm'));
-  $('search-btn').addEventListener('click', handleSearch);
-  $('search-input').addEventListener('keydown', e => { if (e.key === 'Enter') handleSearch(); });
+  $('search-btn').addEventListener('click', handleAiSearch);
+  $('search-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { if (state.mode === 'ai') handleAiSearch(); }
+  });
+  $('add-relations-btn').addEventListener('click', () => handleOsmAdd('relation'));
+  $('add-ways-btn').addEventListener('click',      () => handleOsmAdd('way'));
   $('analyze-btn').addEventListener('click', analyzeAmenities);
+  $('reset-btn').addEventListener('click',   resetAll);
   $('download-svg-btn').addEventListener('click', downloadSVG);
 }
 
@@ -121,16 +123,19 @@ function setMode(mode) {
   $('mode-ai').classList.toggle('active',  mode === 'ai');
   $('mode-osm').classList.toggle('active', mode === 'osm');
 
-  const cfg = {
+  $('search-btn').style.display        = mode === 'ai'  ? '' : 'none';
+  $('num-locations').style.display     = mode === 'ai'  ? '' : 'none';
+  $('add-relations-btn').style.display = mode === 'osm' ? '' : 'none';
+  $('add-ways-btn').style.display      = mode === 'osm' ? '' : 'none';
+
+  const hints = {
     ai:  ['e.g. boutique design district, mountain ski resort, financial CBD…',
           'AI mode: describe any location type — Gemini suggests benchmark examples + custom amenity groups.'],
-    osm: ['e.g. 62149, 5750005, 7444  (comma-separated OSM relation IDs)',
-          'OSM ID mode: paste relation IDs from openstreetmap.org. Uses default groups.'],
-  }[mode];
-
-  $('search-input').placeholder = cfg[0];
-  $('search-hint').textContent  = cfg[1];
-  $('num-locations').style.display = mode === 'ai' ? '' : 'none';
+    osm: ['e.g. 62149, 5750005, 7444  (comma-separated IDs)',
+          'OSM ID mode: paste relation or way IDs from openstreetmap.org and click + Relations or + Ways. Locations are appended to any existing list.'],
+  };
+  $('search-input').placeholder = hints[mode][0];
+  $('search-hint').textContent  = hints[mode][1];
 }
 
 async function loadDefaultGroups() {
@@ -153,14 +158,19 @@ async function loadDefaultGroups() {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SEARCH
+// SEARCH — AI resets; OSM appends
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function handleSearch() {
+async function handleAiSearch() {
   const q = $('search-input').value.trim();
   if (!q) return;
-  if (state.mode === 'ai') await aiSearch(q);
-  else                     await addOsmIds(q);
+  await aiSearch(q);
+}
+
+async function handleOsmAdd(osmType) {
+  const q = $('search-input').value.trim();
+  if (!q) return;
+  await addOsmLocations(q, osmType);
 }
 
 async function aiSearch(category) {
@@ -169,7 +179,6 @@ async function aiSearch(category) {
 
   try {
     const numLocations = parseInt($('num-locations').value, 10) || 15;
-
     const res = await fetch('/api/suggest', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -186,19 +195,19 @@ async function aiSearch(category) {
 
     const locs = data.locations || [];
     setStatus('loading', `Geocoding ${locs.length} locations…`);
+
+    // AI search resets everything for a fresh benchmark set
     resetLocations();
 
     for (const loc of locs) {
       loc._id = crypto.randomUUID();
       addChip(loc);
     }
-
     for (const loc of locs) {
       await geocodeLoc(loc);
       await sleep(1150);
     }
-
-    setStatus('idle', `${locs.length} locations ready · ${state.groups.length} amenity groups defined. Click Analyse.`);
+    setStatus('idle', `${locs.length} locations ready · ${state.groups.length} amenity groups. Click Analyse.`);
   } catch (e) {
     setStatus('error', `AI search failed: ${e.message}`);
   } finally {
@@ -206,22 +215,32 @@ async function aiSearch(category) {
   }
 }
 
-async function addOsmIds(input) {
+// Appends OSM relation or way IDs to the existing location list without resetting
+async function addOsmLocations(input, osmType) {
   const ids = input.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)
                    .map(Number).filter(n => n > 0);
-  if (!ids.length) { setStatus('warn', 'No valid relation IDs found.'); return; }
+  if (!ids.length) { setStatus('warn', 'No valid IDs found.'); return; }
 
-  setStatus('loading', `Looking up ${ids.length} OSM relation(s)…`);
-  resetLocations();
+  const typeLabel = osmType === 'relation' ? 'relation' : 'way';
+  setStatus('loading', `Looking up ${ids.length} OSM ${typeLabel}(s)…`);
+
+  const btn = osmType === 'relation' ? $('add-relations-btn') : $('add-ways-btn');
+  btn.disabled = true;
 
   for (const id of ids) {
-    const loc = { _id: crypto.randomUUID(), name: `Relation ${id}`, country: '',
-                  search_query: '', osm_id: id, osm_type: 'relation' };
+    const loc = {
+      _id: crypto.randomUUID(),
+      name: `${osmType === 'relation' ? 'Relation' : 'Way'} ${id}`,
+      country: '', search_query: '',
+      osm_id: id, osm_type: osmType,
+    };
     addChip(loc);
     await geocodeLocByOsmId(loc);
     await sleep(1150);
   }
-  setStatus('idle', `${ids.length} location(s) ready. Click Analyse.`);
+  setStatus('idle', `${ids.length} ${typeLabel}(s) added. Click Analyse to update.`);
+  btn.disabled = false;
+  $('search-input').value = '';
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -231,19 +250,24 @@ async function addOsmIds(input) {
 function resetLocations() {
   state.locations = [];
   Object.values(state.boundaryLayers).forEach(l => state.map.removeLayer(l));
-  Object.values(state.labelMarkers).forEach(l => state.map.removeLayer(l));
-  if (state.amenityDotLayer) { state.map.removeLayer(state.amenityDotLayer); state.amenityDotLayer = null; }
+  Object.values(state.amenityDotLayers).forEach(l => state.map.removeLayer(l));
   state.boundaryLayers = {};
-  state.labelMarkers = {};
+  state.amenityDotLayers = {};
   state.perLocCounts = [];
   $('locations-bar').innerHTML = '';
   $('locations-bar').classList.remove('visible');
   $('analyze-btn').style.display = 'none';
+  $('reset-btn').style.display = 'none';
   $('map-stats').style.display = 'none';
   $('diagram-content').style.display = 'none';
   $('diagram-loading').style.display = 'none';
   $('diagram-empty').style.display = '';
   _paletteIdx = 0;
+}
+
+function resetAll() {
+  resetLocations();
+  $('search-input').value = '';
 }
 
 function addChip(loc) {
@@ -268,6 +292,7 @@ function addChip(loc) {
 
   state.locations.push({ ...loc, selected: true, status: 'pending' });
   $('analyze-btn').style.display = '';
+  $('reset-btn').style.display = '';
 }
 
 function updateChip(id, status, displayName) {
@@ -283,7 +308,6 @@ function updateChip(id, status, displayName) {
     chip.insertBefore(dot, chip.querySelector('.chip-name'));
   }
   dot.style.background = status === 'ready' ? 'var(--green)' : 'var(--danger)';
-
   if (status === 'error') chip.classList.add('error');
   if (displayName) chip.querySelector('.chip-name').textContent = displayName;
 
@@ -296,21 +320,35 @@ function toggleLocation(id) {
   if (!loc || loc.status !== 'ready') return;
   loc.selected = !loc.selected;
   document.querySelector(`.location-chip[data-id="${id}"]`)?.classList.toggle('selected', loc.selected);
+
+  // Toggle polygon fill + border opacity
   const layer = state.boundaryLayers[id];
-  if (layer) layer.setStyle({ opacity: loc.selected ? 0.85 : 0.25, fillOpacity: loc.selected ? 0.22 : 0.04 });
-  const lbl = state.labelMarkers[id];
-  if (lbl) lbl.getElement()?.style && (lbl.getElement().style.opacity = loc.selected ? '1' : '0.3');
+  if (layer) {
+    layer.setStyle({ opacity: loc.selected ? 0.85 : 0.25, fillOpacity: loc.selected ? 0.18 : 0.03 });
+    // Toggle the permanent label tooltip
+    const tt = layer.getTooltip();
+    if (tt?.getElement()) tt.getElement().style.opacity = loc.selected ? '1' : '0.25';
+  }
+
+  // Show or hide this location's amenity dots
+  const dotLayer = state.amenityDotLayers[id];
+  if (dotLayer) {
+    if (loc.selected) dotLayer.addTo(state.map);
+    else              state.map.removeLayer(dotLayer);
+  }
 }
 
 function removeLocation(id) {
   const idx = state.locations.findIndex(l => l._id === id);
   if (idx >= 0) state.locations.splice(idx, 1);
   document.querySelector(`.location-chip[data-id="${id}"]`)?.remove();
-  if (state.boundaryLayers[id]) { state.map.removeLayer(state.boundaryLayers[id]); delete state.boundaryLayers[id]; }
-  if (state.labelMarkers[id])   { state.map.removeLayer(state.labelMarkers[id]);   delete state.labelMarkers[id]; }
+  if (state.boundaryLayers[id])   { state.map.removeLayer(state.boundaryLayers[id]);   delete state.boundaryLayers[id]; }
+  if (state.amenityDotLayers[id]) { state.map.removeLayer(state.amenityDotLayers[id]); delete state.amenityDotLayers[id]; }
+
   if (!state.locations.length) {
     $('locations-bar').classList.remove('visible');
     $('analyze-btn').style.display = 'none';
+    $('reset-btn').style.display = 'none';
   }
 }
 
@@ -391,7 +429,7 @@ function ensurePolygon(geojson, bbox) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MAP — polygons + amenity dots
+// MAP — polygons with permanent tooltip labels + per-location amenity dots
 // ═══════════════════════════════════════════════════════════════════════════
 
 function showBoundary(id, geojson, name) {
@@ -400,22 +438,17 @@ function showBoundary(id, geojson, name) {
   const layer = L.geoJSON(geojson, {
     style: { color, weight: 2, opacity: 0.85, fillColor: color, fillOpacity: 0.18 },
   }).addTo(state.map);
-  layer.bindTooltip(name, { sticky:true });
-  state.boundaryLayers[id] = layer;
 
-  try {
-    const bounds = layer.getBounds();
-    const center = bounds.getCenter();
-    const label = L.marker(center, {
-      icon: L.divIcon({
-        className: '',
-        html: `<div class="polygon-label" style="border-color:${color}">${name}</div>`,
-        iconSize: null,
-      }),
-      interactive: false,
-    }).addTo(state.map);
-    state.labelMarkers[id] = label;
-  } catch {}
+  // Permanent tooltip acts as the polygon label — rendered in Leaflet's tooltip
+  // pane (overflow:visible) so it never gets clipped at the map panel edge
+  layer.bindTooltip(name, {
+    permanent: true,
+    direction: 'center',
+    className: 'polygon-label',
+    sticky: false,
+  });
+
+  state.boundaryLayers[id] = layer;
 
   const all = Object.values(state.boundaryLayers);
   if (all.length) {
@@ -423,28 +456,44 @@ function showBoundary(id, geojson, name) {
   }
 }
 
-function showAmenityDots(amenities) {
-  if (state.amenityDotLayer) {
-    state.map.removeLayer(state.amenityDotLayer);
-    state.amenityDotLayer = null;
+// Create a separate Leaflet LayerGroup of amenity dots per location so we can
+// show/hide them individually when a location is toggled or removed.
+function showAmenityDotsPerLocation(amenities, selected) {
+  // Clear existing dot layers
+  Object.values(state.amenityDotLayers).forEach(l => state.map.removeLayer(l));
+  state.amenityDotLayers = {};
+
+  // Assign each amenity to a location by bbox containment
+  const perLocAmenities = selected.map(() => []);
+  for (const a of amenities) {
+    for (let i = 0; i < selected.length; i++) {
+      const bbox = selected[i].bbox;
+      if (!bbox) continue;
+      const [minLat, maxLat, minLon, maxLon] = bbox.map(Number);
+      if (a.lat >= minLat && a.lat <= maxLat && a.lon >= minLon && a.lon <= maxLon) {
+        perLocAmenities[i].push(a);
+        break;
+      }
+    }
   }
-  if (!amenities.length) return;
 
-  const markers = amenities.map(a => {
-    const color = state.groupColors[a.group] || '#999999';
-    return L.circleMarker([a.lat, a.lon], {
-      radius: 4,
-      color: 'transparent',
-      fillColor: color,
-      fillOpacity: 0.72,
-      weight: 0,
-    }).bindTooltip(
-      `<strong>${fmt(a.type)}</strong>${a.name ? '<br>' + a.name : ''}`,
-      { sticky: true }
-    );
-  });
-
-  state.amenityDotLayer = L.layerGroup(markers).addTo(state.map);
+  for (let i = 0; i < selected.length; i++) {
+    const locId = selected[i]._id;
+    const markers = perLocAmenities[i].map(a => {
+      const color = state.groupColors[a.group] || '#999999';
+      return L.circleMarker([a.lat, a.lon], {
+        radius: 4, color: 'transparent',
+        fillColor: color, fillOpacity: 0.72, weight: 0,
+      }).bindTooltip(
+        `<strong>${fmt(a.type)}</strong>${a.name ? '<br>' + a.name : ''}`,
+        { sticky: true }
+      );
+    });
+    const group = L.layerGroup(markers);
+    state.amenityDotLayers[locId] = group;
+    // Only add to map if the location is currently selected
+    if (selected[i].selected) group.addTo(state.map);
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -486,11 +535,8 @@ function processOverpass(elements) {
   return amenities;
 }
 
-// Assign each amenity to a location using bbox containment (fast approximation).
-// Locations are typically non-overlapping benchmark areas so this is accurate.
 function assignToLocations(amenities, selected) {
   const perLoc = selected.map(() => ({ counts: {}, total: 0 }));
-
   for (const a of amenities) {
     for (let i = 0; i < selected.length; i++) {
       const bbox = selected[i].bbox;
@@ -499,7 +545,7 @@ function assignToLocations(amenities, selected) {
       if (a.lat >= minLat && a.lat <= maxLat && a.lon >= minLon && a.lon <= maxLon) {
         perLoc[i].counts[a.type] = (perLoc[i].counts[a.type] || 0) + 1;
         perLoc[i].total++;
-        break; // first match wins
+        break;
       }
     }
   }
@@ -508,8 +554,6 @@ function assignToLocations(amenities, selected) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // NORMALISED DIAGRAM DATA
-// Each location gets equal weight regardless of its total amenity count.
-// We average per-location proportions instead of summing raw counts.
 // ═══════════════════════════════════════════════════════════════════════════
 
 function buildNormalizedDiagramData() {
@@ -517,7 +561,6 @@ function buildNormalizedDiagramData() {
   const activeLocs = perLoc.filter(l => l.total > 0);
   const N = activeLocs.length || 1;
 
-  // avgProp[type] = average of (count/total) across locations that have it
   const avgProp = {}, avgCount = {};
   for (const loc of activeLocs) {
     for (const [type, count] of Object.entries(loc.counts)) {
@@ -526,8 +569,8 @@ function buildNormalizedDiagramData() {
     }
   }
   for (const t of Object.keys(avgProp)) {
-    avgProp[t]  /= N;   // average proportion across locations
-    avgCount[t] /= N;   // average absolute count per location
+    avgProp[t]  /= N;
+    avgCount[t] /= N;
   }
 
   const totalProp = Object.values(avgProp).reduce((s, v) => s + v, 0) || 1;
@@ -537,19 +580,13 @@ function buildNormalizedDiagramData() {
     const items = [];
     for (const item of g.items) {
       if (avgProp[item]) {
-        items.push({
-          id: item,
-          count: avgCount[item],
-          proportion: avgProp[item] / totalProp,
-        });
+        items.push({ id: item, count: avgCount[item], proportion: avgProp[item] / totalProp });
       }
     }
     if (!items.length) continue;
     items.sort((a, b) => b.proportion - a.proportion);
     groups.push({
-      id: g.name,
-      color: g.color,
-      description: g.description || '',
+      id: g.name, color: g.color, description: g.description || '',
       total: items.reduce((s, i) => s + i.proportion, 0),
       total_count: items.reduce((s, i) => s + i.count, 0),
       children: items,
@@ -583,11 +620,8 @@ async function analyzeAmenities() {
 
     if (!amenities.length) throw new Error('No matching amenities found in these areas.');
 
-    // Assign amenities to locations for normalised averaging
     state.perLocCounts = assignToLocations(amenities, selected);
-
-    // Show coloured amenity dots on the map
-    showAmenityDots(amenities);
+    showAmenityDotsPerLocation(amenities, selected);
 
     const diagData = buildNormalizedDiagramData();
     const avgTotal = Math.round(diagData.total_amenities);
@@ -595,9 +629,9 @@ async function analyzeAmenities() {
     $('loading-detail').textContent = `${amenities.length} amenities found. Rendering…`;
     $('map-stats').style.display = '';
     $('map-stats').innerHTML =
-      `<strong>${amenities.length.toLocaleString()}</strong> total amenities · ` +
+      `<strong>${amenities.length.toLocaleString()}</strong> total · ` +
       `<strong>avg ~${avgTotal}</strong> per location · ` +
-      `<strong>${selected.length}</strong> location${selected.length > 1 ? 's' : ''}`;
+      `<strong>${selected.length}</strong> area${selected.length > 1 ? 's' : ''}`;
 
     redrawBubbleChart();
     setStatus('idle', `Done — ${amenities.length.toLocaleString()} amenities · avg ~${avgTotal} per location.`);
@@ -635,6 +669,42 @@ function renderDiagram(data, selectedLocs) {
   buildLegend(data.groups);
 }
 
+// Fit label text inside a circle of radius r.
+// Returns font-size used, or 0 if too small to show.
+// Tries single-line first; if wrapping to 2 lines gives ≥20% bigger font, wraps.
+function applyBubbleLabel(textEl, name, r) {
+  const label = fmt(name);
+  const words = label.split(' ');
+
+  // Character width ≈ 0.55 × fontSize; effective chord width ≈ 1.7 × r
+  const fitFs = (chars) => Math.min(r * 0.40, (r * 1.7) / (chars * 0.55), 13);
+
+  const fs1 = fitFs(label.length);
+
+  if (words.length > 1 && r >= 12) {
+    const mid   = Math.ceil(words.length / 2);
+    const line1 = words.slice(0, mid).join(' ');
+    const line2 = words.slice(mid).join(' ');
+    const fs2   = fitFs(Math.max(line1.length, line2.length));
+
+    if (fs2 >= fs1 * 1.15 && fs2 >= 6) {
+      // Two-line layout is meaningfully larger — use it
+      textEl.style('font-size', fs2 + 'px').text('');
+      textEl.append('tspan')
+        .attr('x', textEl.attr('x')).attr('dy', '-0.62em').text(line1);
+      textEl.append('tspan')
+        .attr('x', textEl.attr('x')).attr('dy', '1.25em').text(line2);
+      return fs2;
+    }
+  }
+
+  if (fs1 >= 6) {
+    textEl.style('font-size', fs1 + 'px').text(label);
+    return fs1;
+  }
+  return 0; // too small — don't render
+}
+
 function buildBubbleChart(groups) {
   const svg = d3.select('#bubble-svg');
   svg.selectAll('*').remove();
@@ -661,23 +731,19 @@ function buildBubbleChart(groups) {
     return pad * 0.6;
   })(root);
 
-  const MIN_R = Math.min(W, H) * 0.028;
-
-  // ── D3 zoom ──────────────────────────────────────────────────────────────
+  // ── Zoom ─────────────────────────────────────────────────────────────────
   let zoomedGroup = null;
 
   const zoom = d3.zoom()
     .scaleExtent([0.9, 12])
     .on('zoom', ev => {
       g.attr('transform', ev.transform);
-      // Reveal smaller labels as we zoom in
       const k = ev.transform.k;
-      g.selectAll('.bubble-label').attr('opacity', d => d.r * k >= MIN_R * 0.65 ? 1 : 0);
+      g.selectAll('.leaf-label')
+        .attr('opacity', function() { return +d3.select(this).attr('data-r') * k >= 8 ? 1 : 0; });
     });
 
   svg.call(zoom).on('dblclick.zoom', null);
-
-  // Click on empty SVG background → reset zoom
   svg.on('click', () => {
     zoomedGroup = null;
     svg.style('cursor', 'default');
@@ -687,7 +753,7 @@ function buildBubbleChart(groups) {
   const g = svg.append('g');
   const tooltip = d3.select('#tooltip');
 
-  // ── Halos (group bubbles) — click to zoom in ──────────────────────────
+  // ── Halos ─────────────────────────────────────────────────────────────────
   g.selectAll('.halo')
     .data(root.children)
     .join('circle')
@@ -699,7 +765,6 @@ function buildBubbleChart(groups) {
     .on('click', (event, d) => {
       event.stopPropagation();
       if (zoomedGroup === d) {
-        // Second click on same group → reset
         zoomedGroup = null;
         svg.style('cursor', 'default');
         svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
@@ -714,7 +779,7 @@ function buildBubbleChart(groups) {
       }
     });
 
-  // ── Amenity leaf bubbles ──────────────────────────────────────────────
+  // ── Leaf bubbles ──────────────────────────────────────────────────────────
   g.selectAll('.bubble')
     .data(root.leaves())
     .join('circle')
@@ -731,20 +796,20 @@ function buildBubbleChart(groups) {
     })
     .on('mouseleave', () => tooltip.classed('visible', false));
 
-  // ── Amenity labels ────────────────────────────────────────────────────
-  g.selectAll('.bubble-label')
+  // ── Leaf labels (auto-sized, optional 2-line wrap) ────────────────────────
+  g.selectAll('.leaf-label')
     .data(root.leaves())
     .join('text')
-    .attr('class', 'bubble-label')
+    .attr('class', 'bubble-label leaf-label')
     .attr('x', d => d.x).attr('y', d => d.y)
-    .attr('opacity', d => d.r >= MIN_R ? 1 : 0)
-    .style('font-size', d => Math.min(d.r * 0.36, 12) + 'px')
-    .text(d => {
-      const label = fmt(d.data.name);
-      return label.length > 14 && d.r < MIN_R * 2.2 ? label.split(' ')[0] : label;
+    .attr('data-r', d => d.r)  // used by zoom handler
+    .attr('opacity', d => d.r >= 8 ? 1 : 0)
+    .each(function(d) {
+      const fs = applyBubbleLabel(d3.select(this), d.data.name, d.r);
+      if (!fs) d3.select(this).attr('opacity', 0);
     });
 
-  // ── Group name labels ─────────────────────────────────────────────────
+  // ── Group name labels ─────────────────────────────────────────────────────
   const MIN_HALO_R = Math.min(W, H) * 0.055;
   g.selectAll('.halo-label')
     .data(root.children.filter(d => d.r >= MIN_HALO_R))
@@ -755,9 +820,9 @@ function buildBubbleChart(groups) {
       const topChild = Math.min(...d.children.map(c => c.y - c.r));
       return Math.min(topChild - 5, d.y - d.r + 13);
     })
-    .style('font-size', d => Math.min(d.r * 0.16, 10) + 'px')
+    .style('font-size', d => Math.min(d.r * 0.16, 11) + 'px')
     .style('fill', d => d.data.color)
-    .style('opacity', 0.8)
+    .style('opacity', 0.85)
     .text(d => d.data.name);
 }
 
@@ -792,7 +857,6 @@ function downloadSVG() {
   const clone = svgEl.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
 
-  // Embed font + label styles so the downloaded file renders correctly
   const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
   style.textContent = [
     "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap');",
@@ -804,10 +868,7 @@ function downloadSVG() {
   const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
-  a.href     = url;
-  a.download = 'amenity-ecosystem.svg';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+  a.href = url; a.download = 'amenity-ecosystem.svg';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
 }

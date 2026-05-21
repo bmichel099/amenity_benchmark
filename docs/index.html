@@ -27,7 +27,7 @@
     <div class="search-wrap">
       <div class="mode-toggle">
         <button id="mode-ai"  class="mode-btn active" title="AI-suggested benchmark locations">AI&nbsp;Search</button>
-        <button id="mode-osm" class="mode-btn"        title="Enter OSM relation IDs directly">OSM&nbsp;IDs</button>
+        <button id="mode-osm" class="mode-btn"        title="Enter OSM IDs directly">OSM&nbsp;IDs</button>
       </div>
 
       <div class="search-row">
@@ -37,15 +37,22 @@
                placeholder="e.g. boutique design district, mountain ski resort, financial CBD…"
                autocomplete="off" />
 
+        <!-- AI mode controls -->
         <select id="num-locations" class="num-select" title="Number of benchmark locations">
           <option value="10">10</option>
           <option value="15" selected>15</option>
           <option value="20">20</option>
           <option value="25">25</option>
         </select>
-
         <button id="search-btn" class="btn btn-primary">Search</button>
-        <button id="analyze-btn" class="btn btn-accent" style="display:none">↻ Analyse</button>
+
+        <!-- OSM mode controls (hidden in AI mode) -->
+        <button id="add-relations-btn" class="btn btn-secondary" style="display:none" title="Add OSM relation IDs">+ Relations</button>
+        <button id="add-ways-btn"      class="btn btn-secondary" style="display:none" title="Add OSM way IDs">+ Ways</button>
+
+        <!-- Always visible when locations exist -->
+        <button id="analyze-btn" class="btn btn-accent"   style="display:none">↻ Analyse</button>
+        <button id="reset-btn"   class="btn btn-ghost"    style="display:none" title="Clear all locations">✕ Reset</button>
       </div>
 
       <p id="search-hint" class="search-hint">
