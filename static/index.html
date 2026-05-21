@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Amenity Benchmark</title>
+
+  <!-- Leaflet -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- D3 v7 -->
+  <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
+
+  <!-- Inter font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+
+<body>
+
+  <!-- ── Header ── -->
+  <header>
+    <div class="app-brand">
+      <div class="brand-mark"></div>
+      <span class="app-title">Amenity Benchmark</span>
+    </div>
+
+    <div class="search-wrap">
+      <div class="mode-toggle">
+        <button id="mode-ai" class="mode-btn active" title="Let AI suggest matching locations">AI Search</button>
+        <button id="mode-osm" class="mode-btn" title="Enter OSM relation IDs directly">OSM IDs</button>
+      </div>
+
+      <div class="search-row">
+        <input id="search-input"
+               class="search-input"
+               type="text"
+               placeholder="e.g. CBD, ski resort town, historic city centre…"
+               autocomplete="off" />
+        <button id="search-btn" class="btn btn-primary">Search</button>
+      </div>
+      <p id="search-hint" class="search-hint">
+        AI mode: describe a location type and we'll suggest benchmark examples worldwide.
+      </p>
+    </div>
+
+    <div class="header-actions">
+      <button id="analyze-btn" class="btn btn-accent" style="display:none">
+        ↻ Analyse amenities
+      </button>
+    </div>
+  </header>
+
+  <!-- ── Location chips bar ── -->
+  <div id="locations-bar" class="locations-bar"></div>
+
+  <!-- ── Main layout ── -->
+  <main class="main">
+
+    <!-- Left: map -->
+    <section class="map-panel">
+      <div id="map"></div>
+
+      <div class="map-overlay-bottom">
+        <div id="map-stats" class="map-stats" style="display:none"></div>
+      </div>
+
+      <!-- Map legend pill -->
+      <div id="map-legend" class="map-legend" style="display:none">
+        <div class="map-legend-title">Amenity groups</div>
+        <div id="map-legend-items"></div>
+      </div>
+    </section>
+
+    <!-- Right: diagram -->
+    <section class="diagram-panel">
+
+      <!-- Empty / loading state -->
+      <div id="diagram-empty" class="empty-state">
+        <div class="empty-icon">◎</div>
+        <div class="empty-title">No data yet</div>
+        <div class="empty-text">
+          Search for a location type, select areas on the map,<br>
+          then click <strong>Analyse amenities</strong>.
+        </div>
+      </div>
+
+      <!-- Loading state -->
+      <div id="diagram-loading" class="empty-state" style="display:none">
+        <div class="spinner"></div>
+        <div class="empty-title">Fetching amenities…</div>
+        <div id="loading-detail" class="empty-text">Querying OpenStreetMap</div>
+      </div>
+
+      <!-- Chart + legend (shown once data is ready) -->
+      <div id="diagram-content" style="display:none; height:100%; display:none; flex-direction:column;">
+        <div class="diagram-header">
+          <div id="diagram-title" class="diagram-title"></div>
+          <div id="diagram-subtitle" class="diagram-subtitle"></div>
+        </div>
+
+        <div class="bubble-container" id="bubble-container">
+          <svg id="bubble-svg"></svg>
+        </div>
+
+        <div class="legend-container" id="legend-container"></div>
+      </div>
+
+    </section>
+  </main>
+
+  <!-- ── Status bar ── -->
+  <div class="status-bar">
+    <span id="status-dot" class="status-dot"></span>
+    <span id="status-msg">Ready — enter a location type to begin.</span>
+  </div>
+
+  <!-- Tooltip -->
+  <div id="tooltip" class="tooltip"></div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
