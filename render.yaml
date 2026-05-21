@@ -1,0 +1,19 @@
+# Render Blueprint — one-click deploy from this repo.
+# 1. Push this repo to GitHub
+# 2. On Render: New → Blueprint → connect repo
+# 3. Set GOOGLE_AI_API_KEY in the service's Environment tab
+services:
+  - type: web
+    name: amenity-benchmark
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: GOOGLE_AI_API_KEY
+        sync: false      # set this manually in the Render dashboard
+      - key: GEMINI_MODEL
+        value: gemini-2.0-flash
+      - key: PYTHON_VERSION
+        value: "3.11"

@@ -5,14 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Amenity Benchmark</title>
 
-  <!-- Leaflet -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
-  <!-- D3 v7 -->
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 
-  <!-- Inter font -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
@@ -30,25 +26,29 @@
 
     <div class="search-wrap">
       <div class="mode-toggle">
-        <button id="mode-preset" class="mode-btn active" title="Search from curated location presets">Presets</button>
-        <button id="mode-nominatim" class="mode-btn" title="Search any place by name via OpenStreetMap">Place search</button>
-        <button id="mode-osm" class="mode-btn" title="Enter OSM relation IDs directly">OSM IDs</button>
+        <button id="mode-ai"  class="mode-btn active" title="AI-suggested benchmark locations">AI&nbsp;Search</button>
+        <button id="mode-osm" class="mode-btn"        title="Enter OSM relation IDs directly">OSM&nbsp;IDs</button>
       </div>
 
-      <div class="search-row" style="position:relative">
+      <div class="search-row">
         <input id="search-input"
                class="search-input"
                type="text"
-               placeholder="e.g. CBD, ski resort town, beach resort…"
+               placeholder="e.g. boutique design district, mountain ski resort, financial CBD…"
                autocomplete="off" />
-        <button id="search-btn" class="btn btn-primary">Search</button>
 
-        <!-- Dropdown shown in preset and nominatim modes -->
-        <div id="search-dropdown" class="search-dropdown" style="display:none"></div>
+        <select id="num-locations" class="num-select" title="Number of benchmark locations">
+          <option value="10">10</option>
+          <option value="15" selected>15</option>
+          <option value="20">20</option>
+          <option value="25">25</option>
+        </select>
+
+        <button id="search-btn" class="btn btn-primary">Search</button>
       </div>
 
       <p id="search-hint" class="search-hint">
-        Preset mode: type a location type to load curated benchmark examples — no API key needed.
+        AI mode: describe any location type — Gemini suggests benchmark examples worldwide and defines context-specific amenity groups.
       </p>
     </div>
 
@@ -60,20 +60,14 @@
   <!-- ── Location chips bar ── -->
   <div id="locations-bar" class="locations-bar"></div>
 
-  <!-- ── Main layout ── -->
+  <!-- ── Main split ── -->
   <main class="main">
 
     <!-- Left: map -->
     <section class="map-panel">
       <div id="map"></div>
-
       <div class="map-overlay-bottom">
         <div id="map-stats" class="map-stats" style="display:none"></div>
-      </div>
-
-      <div id="map-legend" class="map-legend" style="display:none">
-        <div class="map-legend-title">Amenity groups</div>
-        <div id="map-legend-items"></div>
       </div>
     </section>
 
@@ -84,15 +78,15 @@
         <div class="empty-icon">◎</div>
         <div class="empty-title">No data yet</div>
         <div class="empty-text">
-          Search for a location type, add areas to the map,<br>
-          then click <strong>Analyse amenities</strong>.
+          Describe a location type and click <strong>Search</strong>.<br>
+          Once locations appear, click <strong>Analyse amenities</strong>.
         </div>
       </div>
 
       <div id="diagram-loading" class="empty-state" style="display:none">
         <div class="spinner"></div>
-        <div class="empty-title">Fetching amenities…</div>
-        <div id="loading-detail" class="empty-text">Querying OpenStreetMap</div>
+        <div class="empty-title">Working…</div>
+        <div id="loading-detail" class="empty-text">Loading</div>
       </div>
 
       <div id="diagram-content" style="display:none">
@@ -112,10 +106,9 @@
   <!-- ── Status bar ── -->
   <div class="status-bar">
     <span id="status-dot" class="status-dot"></span>
-    <span id="status-msg">Ready — enter a location type to begin.</span>
+    <span id="status-msg">Ready — describe a location type to begin.</span>
   </div>
 
-  <!-- Tooltip -->
   <div id="tooltip" class="tooltip"></div>
 
   <script src="app.js"></script>
