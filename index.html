@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 
 <body>
@@ -30,27 +30,30 @@
 
     <div class="search-wrap">
       <div class="mode-toggle">
-        <button id="mode-ai" class="mode-btn active" title="Let AI suggest matching locations">AI Search</button>
+        <button id="mode-preset" class="mode-btn active" title="Search from curated location presets">Presets</button>
+        <button id="mode-nominatim" class="mode-btn" title="Search any place by name via OpenStreetMap">Place search</button>
         <button id="mode-osm" class="mode-btn" title="Enter OSM relation IDs directly">OSM IDs</button>
       </div>
 
-      <div class="search-row">
+      <div class="search-row" style="position:relative">
         <input id="search-input"
                class="search-input"
                type="text"
-               placeholder="e.g. CBD, ski resort town, historic city centre…"
+               placeholder="e.g. CBD, ski resort town, beach resort…"
                autocomplete="off" />
         <button id="search-btn" class="btn btn-primary">Search</button>
+
+        <!-- Dropdown shown in preset and nominatim modes -->
+        <div id="search-dropdown" class="search-dropdown" style="display:none"></div>
       </div>
+
       <p id="search-hint" class="search-hint">
-        AI mode: describe a location type and we'll suggest benchmark examples worldwide.
+        Preset mode: type a location type to load curated benchmark examples — no API key needed.
       </p>
     </div>
 
     <div class="header-actions">
-      <button id="analyze-btn" class="btn btn-accent" style="display:none">
-        ↻ Analyse amenities
-      </button>
+      <button id="analyze-btn" class="btn btn-accent" style="display:none">↻ Analyse amenities</button>
     </div>
   </header>
 
@@ -68,7 +71,6 @@
         <div id="map-stats" class="map-stats" style="display:none"></div>
       </div>
 
-      <!-- Map legend pill -->
       <div id="map-legend" class="map-legend" style="display:none">
         <div class="map-legend-title">Amenity groups</div>
         <div id="map-legend-items"></div>
@@ -78,34 +80,29 @@
     <!-- Right: diagram -->
     <section class="diagram-panel">
 
-      <!-- Empty / loading state -->
       <div id="diagram-empty" class="empty-state">
         <div class="empty-icon">◎</div>
         <div class="empty-title">No data yet</div>
         <div class="empty-text">
-          Search for a location type, select areas on the map,<br>
+          Search for a location type, add areas to the map,<br>
           then click <strong>Analyse amenities</strong>.
         </div>
       </div>
 
-      <!-- Loading state -->
       <div id="diagram-loading" class="empty-state" style="display:none">
         <div class="spinner"></div>
         <div class="empty-title">Fetching amenities…</div>
         <div id="loading-detail" class="empty-text">Querying OpenStreetMap</div>
       </div>
 
-      <!-- Chart + legend (shown once data is ready) -->
-      <div id="diagram-content" style="display:none; height:100%; display:none; flex-direction:column;">
+      <div id="diagram-content" style="display:none">
         <div class="diagram-header">
           <div id="diagram-title" class="diagram-title"></div>
           <div id="diagram-subtitle" class="diagram-subtitle"></div>
         </div>
-
         <div class="bubble-container" id="bubble-container">
           <svg id="bubble-svg"></svg>
         </div>
-
         <div class="legend-container" id="legend-container"></div>
       </div>
 
@@ -121,6 +118,6 @@
   <!-- Tooltip -->
   <div id="tooltip" class="tooltip"></div>
 
-  <script src="/static/app.js"></script>
+  <script src="app.js"></script>
 </body>
 </html>
