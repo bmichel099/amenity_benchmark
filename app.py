@@ -21,14 +21,14 @@ app = FastAPI(title="Amenity Benchmark")
 
 @app.get("/")
 async def index():
-    return FileResponse("index.html")
+    return FileResponse("docs/index.html")
 
 
 @app.get("/style.css")
 async def css():
-    return FileResponse("style.css", media_type="text/css")
+    return FileResponse("docs/style.css", media_type="text/css")
 
 
 @app.get("/app.js")
 async def js():
-    return FileResponse("app.js", media_type="application/javascript")
+    return FileResponse("docs/app.js", media_type="application/javascript")
