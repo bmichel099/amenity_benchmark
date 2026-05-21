@@ -18,7 +18,8 @@ Deployment on Render:
 import json
 import os
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -34,10 +35,15 @@ load_dotenv()
 app = FastAPI(title="Amenity Benchmark")
 
 GOOGLE_AI_KEY = os.getenv("GOOGLE_AI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-if GOOGLE_AI_KEY:
-    genai.configure(api_key=GOOGLE_AI_KEY)
+_client: genai.Client | None = None
+
+def get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        _client = genai.Client(api_key=GOOGLE_AI_KEY)
+    return _client
 
 
 # ── Schema ────────────────────────────────────────────────────────────────────
@@ -136,16 +142,15 @@ async def suggest(req: SuggestRequest):
     if not GOOGLE_AI_KEY:
         raise HTTPException(503, "GOOGLE_AI_API_KEY not configured on the server")
 
-    model = genai.GenerativeModel(
-        GEMINI_MODEL,
-        generation_config={
-            "response_mime_type": "application/json",
-            "temperature": 0.4,
-        },
-    )
-
     try:
-        response = model.generate_content(build_prompt(req.category, req.num_locations))
+        response = get_client().models.generate_content(
+            model=GEMINI_MODEL,
+            contents=build_prompt(req.category, req.num_locations),
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                temperature=0.4,
+            ),
+        )
     except Exception as exc:
         raise HTTPException(502, f"Gemini API error: {exc}") from exc
 
