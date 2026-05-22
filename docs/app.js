@@ -130,7 +130,9 @@ function bindEvents() {
         const loc = state.locations.find(l => l._id === id);
         if (!loc) return;
         const b = layer.getBounds();
-        loc.bbox = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
+        loc.bbox   = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
+        loc.geojson = subLayer.toGeoJSON().geometry;
+        loc.edited  = true;
       });
     }
     $('map-ctx-menu').style.display = 'none';
@@ -545,16 +547,49 @@ function showAmenityDotsPerLocation(amenities, selected) {
 // OVERPASS
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function fetchOverpass(locations) {
-  const areaLines = locations.map(loc => {
-    const areaId = (loc.osm_type === 'way' ? 2_400_000_000 : 3_600_000_000) + loc.osm_id;
-    return `  area(id:${areaId});`;
-  }).join('\n');
+// Convert a GeoJSON Polygon/MultiPolygon geometry to an Overpass poly: string
+// ("lat lon lat lon …" — outer ring only, closing point stripped)
+function geojsonToPoly(geojson) {
+  if (!geojson) return null;
+  const ring = geojson.type === 'Polygon'      ? geojson.coordinates[0]
+             : geojson.type === 'MultiPolygon' ? geojson.coordinates[0][0]
+             : null;
+  if (!ring) return null;
+  return ring.slice(0, -1).map(([lon, lat]) => `${lat} ${lon}`).join(' ');
+}
 
-  const query =
-    `[out:json][timeout:120];\n(\n${areaLines}\n)->.s;\n` +
-    `(\n  node["amenity"](area.s);\n  way["amenity"](area.s);\n` +
-    `  node["shop"](area.s);\n  way["shop"](area.s);\n);\nout center tags;`;
+async function fetchOverpass(locations) {
+  const areaLocs = locations.filter(l => !l.edited);
+  const polyLocs = locations.filter(l => l.edited && l.geojson);
+
+  let query = '[out:json][timeout:120];\n';
+
+  // Named area set for unedited OSM locations
+  if (areaLocs.length) {
+    const areaLines = areaLocs.map(loc => {
+      const areaId = (loc.osm_type === 'way' ? 2_400_000_000 : 3_600_000_000) + loc.osm_id;
+      return `  area(id:${areaId});`;
+    }).join('\n');
+    query += `(\n${areaLines}\n)->.s;\n`;
+  }
+
+  // Union: area.s for originals + poly: for each edited polygon
+  const parts = [];
+  if (areaLocs.length) {
+    parts.push(
+      '  node["amenity"](area.s)', '  way["amenity"](area.s)',
+      '  node["shop"](area.s)',    '  way["shop"](area.s)',
+    );
+  }
+  for (const loc of polyLocs) {
+    const poly = geojsonToPoly(loc.geojson);
+    if (!poly) continue;
+    parts.push(
+      `  node["amenity"](poly:"${poly}")`, `  way["amenity"](poly:"${poly}")`,
+      `  node["shop"](poly:"${poly}")`,    `  way["shop"](poly:"${poly}")`,
+    );
+  }
+  query += `(\n${parts.join(';\n')};\n);\nout center tags;`;
 
   // Retry up to 3 times on 429 (rate-limit) with exponential back-off
   const delays = [4000, 10000, 20000];
