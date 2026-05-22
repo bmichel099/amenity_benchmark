@@ -556,12 +556,26 @@ async function fetchOverpass(locations) {
     `(\n  node["amenity"](area.s);\n  way["amenity"](area.s);\n` +
     `  node["shop"](area.s);\n  way["shop"](area.s);\n);\nout center tags;`;
 
-  const res = await fetch(OVERPASS, {
-    method: 'POST',
-    body: new URLSearchParams({ data: query }),
-  });
-  if (!res.ok) throw new Error(`Overpass ${res.status}`);
-  return res.json();
+  // Retry up to 3 times on 429 (rate-limit) with exponential back-off
+  const delays = [4000, 10000, 20000];
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    const res = await fetch(OVERPASS, {
+      method: 'POST',
+      body: new URLSearchParams({ data: query }),
+    });
+    if (res.ok) return res.json();
+    if (res.status === 429 && attempt < delays.length) {
+      const wait = delays[attempt];
+      setStatus('loading', `Overpass rate-limited — retrying in ${wait / 1000}s… (attempt ${attempt + 2}/4)`);
+      await sleep(wait);
+      continue;
+    }
+    throw new Error(
+      res.status === 429
+        ? 'Overpass API is rate-limiting this IP — please wait 30 s and try again.'
+        : `Overpass error ${res.status}`
+    );
+  }
 }
 
 function processOverpass(elements) {
