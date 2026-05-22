@@ -47,6 +47,7 @@ const BOUNDARY_PALETTE = ['#2563eb','#7c3aed','#059669','#dc2626','#d97706',
                           '#0891b2','#db2777','#65a30d','#ea580c','#6366f1',
                           '#0ea5e9','#f43f5e','#84cc16','#a855f7'];
 let _paletteIdx = 0;
+let _ctxTarget  = null;  // { subLayer, layer, id } for the right-click context menu
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -117,6 +118,28 @@ function bindEvents() {
   $('reset-btn').addEventListener('click',   resetAll);
   $('download-svg-btn').addEventListener('click', downloadSVG);
   $('download-geojson-btn').addEventListener('click', downloadAmenitiesGeoJSON);
+
+  $('ctx-edit-btn').addEventListener('click', () => {
+    if (!_ctxTarget) return;
+    const { subLayer, layer, id } = _ctxTarget;
+    if (subLayer.editor) {
+      subLayer.disableEdit();
+    } else if (subLayer.enableEdit) {
+      subLayer.enableEdit();
+      subLayer.on('editable:vertex:dragend', () => {
+        const loc = state.locations.find(l => l._id === id);
+        if (!loc) return;
+        const b = layer.getBounds();
+        loc.bbox = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
+      });
+    }
+    $('map-ctx-menu').style.display = 'none';
+    _ctxTarget = null;
+  });
+
+  document.addEventListener('click', e => {
+    if (!e.target.closest('#map-ctx-menu')) $('map-ctx-menu').style.display = 'none';
+  });
 }
 
 function setMode(mode) {
@@ -188,7 +211,10 @@ async function aiSearch(category) {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || res.statusText);
+      const detail = Array.isArray(err.detail)
+        ? err.detail.map(e => e.msg || JSON.stringify(e)).join('; ')
+        : (err.detail || res.statusText);
+      throw new Error(detail);
     }
 
     const data = await res.json();
@@ -453,20 +479,20 @@ function showBoundary(id, geojson, name) {
 
   state.boundaryLayers[id] = layer;
 
-  // Editable vertices only for synthetic bbox rectangles (no real OSM polygon was available).
-  // Real OSM polygons are complex and don't need manual adjustment.
-  const loc = state.locations.find(l => l._id === id);
-  if (loc?.synthetic_bbox) {
-    layer.eachLayer(subLayer => {
-      if (subLayer.enableEdit) {
-        subLayer.enableEdit();
-        subLayer.on('editable:vertex:dragend', () => {
-          const b = layer.getBounds();
-          loc.bbox = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
-        });
-      }
+  // Right-click any polygon to get an "Edit vertices" / "Done editing" option.
+  // Editing is never enabled automatically — only on explicit user request.
+  layer.eachLayer(subLayer => {
+    subLayer.on('contextmenu', e => {
+      L.DomEvent.stop(e);
+      _ctxTarget = { subLayer, layer, id };
+      const menu = $('map-ctx-menu');
+      const editing = !!subLayer.editor;
+      menu.querySelector('#ctx-edit-btn').textContent = editing ? '✓ Done editing' : '✏ Edit vertices';
+      menu.style.left = e.originalEvent.clientX + 'px';
+      menu.style.top  = e.originalEvent.clientY + 'px';
+      menu.style.display = 'block';
     });
-  }
+  });
 
   const all = Object.values(state.boundaryLayers);
   if (all.length) {

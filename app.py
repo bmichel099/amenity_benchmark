@@ -51,7 +51,7 @@ def get_client() -> genai.Client:
 
 class SuggestRequest(BaseModel):
     category: str
-    num_locations: int = Field(default=15, ge=4, le=30)
+    num_locations: int = Field(default=15, ge=1, le=30)
 
 
 # ── Prompt ────────────────────────────────────────────────────────────────────

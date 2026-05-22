@@ -417,6 +417,33 @@ header {
 .tooltip-name { font-weight: 600; }
 .tooltip-detail { color: rgba(255,255,255,.75); font-size: 11px; }
 
+/* ── Map right-click context menu ───────────────────────────────────────── */
+.map-ctx-menu {
+  position: fixed;
+  z-index: 10000;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px;
+  box-shadow: var(--shadow-md);
+  min-width: 140px;
+}
+.map-ctx-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 12px;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text);
+  white-space: nowrap;
+}
+.map-ctx-menu button:hover { background: var(--surface-2); }
+
 /* ── Status bar ──────────────────────────────────────────────────────────── */
 .status-bar {
   height: var(--status-h);
