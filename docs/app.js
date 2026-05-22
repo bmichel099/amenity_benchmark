@@ -92,7 +92,7 @@ window.addEventListener('DOMContentLoaded', () => {
 });
 
 function initMap() {
-  state.map = L.map('map', { center:[25,10], zoom:2, worldCopyJump:true, minZoom:1 });
+  state.map = L.map('map', { center:[25,10], zoom:2, worldCopyJump:true, minZoom:1, editable: true });
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '© <a href="https://openstreetmap.org">OSM</a> contributors © <a href="https://carto.com">CARTO</a>',
     subdomains: 'abcd', maxZoom: 19,
@@ -116,6 +116,7 @@ function bindEvents() {
   $('analyze-btn').addEventListener('click', analyzeAmenities);
   $('reset-btn').addEventListener('click',   resetAll);
   $('download-svg-btn').addEventListener('click', downloadSVG);
+  $('download-geojson-btn').addEventListener('click', downloadAmenitiesGeoJSON);
 }
 
 function setMode(mode) {
@@ -450,6 +451,19 @@ function showBoundary(id, geojson, name) {
 
   state.boundaryLayers[id] = layer;
 
+  // Enable vertex-drag editing on each polygon sub-layer
+  layer.eachLayer(subLayer => {
+    if (subLayer.enableEdit) {
+      subLayer.enableEdit();
+      subLayer.on('editable:vertex:dragend', () => {
+        const loc = state.locations.find(l => l._id === id);
+        if (!loc) return;
+        const b = layer.getBounds();
+        loc.bbox = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
+      });
+    }
+  });
+
   const all = Object.values(state.boundaryLayers);
   if (all.length) {
     state.map.fitBounds(L.featureGroup(all).getBounds().pad(0.15), { maxZoom: 13 });
@@ -471,6 +485,7 @@ function showAmenityDotsPerLocation(amenities, selected) {
       if (!bbox) continue;
       const [minLat, maxLat, minLon, maxLon] = bbox.map(Number);
       if (a.lat >= minLat && a.lat <= maxLat && a.lon >= minLon && a.lon <= maxLon) {
+        a.benchmark_location = selected[i].display_name?.split(',')[0] || selected[i].name;
         perLocAmenities[i].push(a);
         break;
       }
@@ -530,7 +545,7 @@ function processOverpass(elements) {
     const lat = el.type === 'node' ? el.lat : el.center?.lat;
     const lon = el.type === 'node' ? el.lon : el.center?.lon;
     if (lat == null || lon == null) continue;
-    amenities.push({ type, group, lat, lon, name: tags.name || '' });
+    amenities.push({ type, group, lat, lon, name: tags.name || '', osm_id: el.id, osm_type: el.type, tags: { ...tags } });
   }
   return amenities;
 }
@@ -677,7 +692,8 @@ function applyBubbleLabel(textEl, name, r) {
   const words = label.split(' ');
 
   // Character width ≈ 0.55 × fontSize; effective chord width ≈ 1.7 × r
-  const fitFs = (chars) => Math.min(r * 0.40, (r * 1.7) / (chars * 0.55), 13);
+  // Always produce at least 1.5 px so the label is in the DOM and appears on zoom-in
+  const fitFs = (chars) => Math.max(1.5, Math.min(r * 0.40, (r * 1.7) / (chars * 0.55), 13));
 
   const fs1 = fitFs(label.length);
 
@@ -687,8 +703,7 @@ function applyBubbleLabel(textEl, name, r) {
     const line2 = words.slice(mid).join(' ');
     const fs2   = fitFs(Math.max(line1.length, line2.length));
 
-    if (fs2 >= fs1 * 1.15 && fs2 >= 6) {
-      // Two-line layout is meaningfully larger — use it
+    if (fs2 >= fs1 * 1.15) {
       textEl.style('font-size', fs2 + 'px').text('');
       textEl.append('tspan')
         .attr('x', textEl.attr('x')).attr('dy', '-0.62em').text(line1);
@@ -698,11 +713,8 @@ function applyBubbleLabel(textEl, name, r) {
     }
   }
 
-  if (fs1 >= 6) {
-    textEl.style('font-size', fs1 + 'px').text(label);
-    return fs1;
-  }
-  return 0; // too small — don't render
+  textEl.style('font-size', fs1 + 'px').text(label);
+  return fs1;
 }
 
 function buildBubbleChart(groups) {
@@ -805,8 +817,7 @@ function buildBubbleChart(groups) {
     .attr('data-r', d => d.r)  // used by zoom handler
     .attr('opacity', d => d.r >= 8 ? 1 : 0)
     .each(function(d) {
-      const fs = applyBubbleLabel(d3.select(this), d.data.name, d.r);
-      if (!fs) d3.select(this).attr('opacity', 0);
+      applyBubbleLabel(d3.select(this), d.data.name, d.r);
     });
 
   // ── Group name labels ─────────────────────────────────────────────────────
@@ -869,6 +880,36 @@ function downloadSVG() {
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href = url; a.download = 'amenity-ecosystem.svg';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GEOJSON DOWNLOAD
+// ═══════════════════════════════════════════════════════════════════════════
+
+function downloadAmenitiesGeoJSON() {
+  if (!state.amenities.length) return;
+
+  const features = state.amenities.filter(a => a.lat != null).map(a => ({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [a.lon, a.lat] },
+    properties: {
+      osm_id:             a.osm_id   || null,
+      osm_type:           a.osm_type || null,
+      amenity_type:       a.type,
+      name:               a.name     || null,
+      group:              a.group,
+      benchmark_location: a.benchmark_location || null,
+      ...(a.tags || {}),
+    },
+  }));
+
+  const geojson = JSON.stringify({ type: 'FeatureCollection', features }, null, 2);
+  const blob = new Blob([geojson], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = 'amenities.geojson';
   document.body.appendChild(a); a.click();
   document.body.removeChild(a); URL.revokeObjectURL(url);
 }
