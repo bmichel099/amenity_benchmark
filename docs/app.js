@@ -404,6 +404,7 @@ async function geocodeLocByOsmId(loc) {
 
 function applyGeocodeResult(loc, r) {
   const shortName = r.display_name.split(',').slice(0,2).join(',').trim();
+  const realGeoJSON = r.geojson && (r.geojson.type === 'Polygon' || r.geojson.type === 'MultiPolygon');
   Object.assign(loc, {
     osm_id: parseInt(r.osm_id),
     osm_type: r.osm_type,
@@ -411,6 +412,7 @@ function applyGeocodeResult(loc, r) {
     geojson: ensurePolygon(r.geojson, r.boundingbox),
     bbox: r.boundingbox,   // [minLat, maxLat, minLon, maxLon]
     status: 'ready',
+    synthetic_bbox: !realGeoJSON,  // true when Nominatim had no polygon → we drew a bbox rectangle
   });
   const entry = state.locations.find(l => l._id === loc._id);
   if (entry) Object.assign(entry, loc);
@@ -451,18 +453,20 @@ function showBoundary(id, geojson, name) {
 
   state.boundaryLayers[id] = layer;
 
-  // Enable vertex-drag editing on each polygon sub-layer
-  layer.eachLayer(subLayer => {
-    if (subLayer.enableEdit) {
-      subLayer.enableEdit();
-      subLayer.on('editable:vertex:dragend', () => {
-        const loc = state.locations.find(l => l._id === id);
-        if (!loc) return;
-        const b = layer.getBounds();
-        loc.bbox = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
-      });
-    }
-  });
+  // Editable vertices only for synthetic bbox rectangles (no real OSM polygon was available).
+  // Real OSM polygons are complex and don't need manual adjustment.
+  const loc = state.locations.find(l => l._id === id);
+  if (loc?.synthetic_bbox) {
+    layer.eachLayer(subLayer => {
+      if (subLayer.enableEdit) {
+        subLayer.enableEdit();
+        subLayer.on('editable:vertex:dragend', () => {
+          const b = layer.getBounds();
+          loc.bbox = [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()];
+        });
+      }
+    });
+  }
 
   const all = Object.values(state.boundaryLayers);
   if (all.length) {
