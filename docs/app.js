@@ -680,8 +680,9 @@ function geojsonToPoly(geojson) {
 }
 
 async function fetchOverpass(locations) {
-  const areaLocs = locations.filter(l => !l.edited);
-  const polyLocs = locations.filter(l => l.edited && l.geojson);
+  // Relations reliably get area objects in Overpass; ways do not always, so use poly: for them
+  const areaLocs = locations.filter(l => !l.edited && l.osm_type === 'relation');
+  const polyLocs = locations.filter(l => (l.edited || l.osm_type !== 'relation') && l.geojson);
 
   let query = '[out:json][timeout:120];\n';
 
