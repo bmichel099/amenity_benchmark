@@ -46,8 +46,10 @@ const OVERPASS  = 'https://overpass-api.de/api/interpreter';
 const BOUNDARY_PALETTE = ['#2563eb','#7c3aed','#059669','#dc2626','#d97706',
                           '#0891b2','#db2777','#65a30d','#ea580c','#6366f1',
                           '#0ea5e9','#f43f5e','#84cc16','#a855f7'];
-let _paletteIdx = 0;
-let _ctxTarget  = null;  // { subLayer, layer, id } for the right-click context menu
+let _paletteIdx      = 0;
+let _ctxTarget       = null;   // { subLayer, layer, id } for the right-click context menu
+let _drawingLayer    = null;   // L.Polygon layer while draw mode is active
+let _drawCommitHnd   = null;   // editable:drawing:commit handler (stored for removal)
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS
@@ -106,18 +108,41 @@ function initMap() {
 }
 
 function bindEvents() {
-  $('mode-ai').addEventListener('click',  () => setMode('ai'));
-  $('mode-osm').addEventListener('click', () => setMode('osm'));
+  $('mode-ai').addEventListener('click',   () => setMode('ai'));
+  $('mode-osm').addEventListener('click',  () => setMode('osm'));
+  $('mode-draw').addEventListener('click', () => setMode('draw'));
+
   $('search-btn').addEventListener('click', handleAiSearch);
   $('search-input').addEventListener('keydown', e => {
     if (e.key === 'Enter') { if (state.mode === 'ai') handleAiSearch(); }
   });
   $('add-relations-btn').addEventListener('click', () => handleOsmAdd('relation'));
   $('add-ways-btn').addEventListener('click',      () => handleOsmAdd('way'));
+  $('draw-polygon-btn').addEventListener('click',  handleDrawPolygon);
+  $('draw-cancel-btn').addEventListener('click',   cancelDraw);
+
   $('analyze-btn').addEventListener('click', analyzeAmenities);
   $('reset-btn').addEventListener('click',   resetAll);
   $('download-svg-btn').addEventListener('click', downloadSVG);
   $('download-geojson-btn').addEventListener('click', downloadAmenitiesGeoJSON);
+
+  // Draw label modal
+  $('draw-label-confirm').addEventListener('click', () => {
+    const name = $('draw-label-input').value.trim() || 'Custom Area';
+    $('draw-label-modal').style.display = 'none';
+    if (_drawingLayer) addDrawnPolygon(_drawingLayer, name);
+  });
+  $('draw-label-cancel').addEventListener('click', () => {
+    $('draw-label-modal').style.display = 'none';
+    if (_drawingLayer) { state.map.removeLayer(_drawingLayer); _drawingLayer = null; }
+    $('draw-polygon-btn').disabled = false;
+    $('draw-cancel-btn').style.display = 'none';
+    setStatus('idle', 'Draw cancelled.');
+  });
+  $('draw-label-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter')  $('draw-label-confirm').click();
+    if (e.key === 'Escape') $('draw-label-cancel').click();
+  });
 
   $('ctx-edit-btn').addEventListener('click', () => {
     if (!_ctxTarget) return;
@@ -145,23 +170,32 @@ function bindEvents() {
 }
 
 function setMode(mode) {
-  state.mode = mode;
-  $('mode-ai').classList.toggle('active',  mode === 'ai');
-  $('mode-osm').classList.toggle('active', mode === 'osm');
+  // Cancel any active drawing when leaving draw mode
+  if (state.mode === 'draw' && mode !== 'draw') cancelDraw();
 
-  $('search-btn').style.display        = mode === 'ai'  ? '' : 'none';
-  $('num-locations').style.display     = mode === 'ai'  ? '' : 'none';
-  $('add-relations-btn').style.display = mode === 'osm' ? '' : 'none';
-  $('add-ways-btn').style.display      = mode === 'osm' ? '' : 'none';
+  state.mode = mode;
+  $('mode-ai').classList.toggle('active',   mode === 'ai');
+  $('mode-osm').classList.toggle('active',  mode === 'osm');
+  $('mode-draw').classList.toggle('active', mode === 'draw');
+
+  $('search-input').style.display       = mode === 'draw' ? 'none' : '';
+  $('search-btn').style.display         = mode === 'ai'   ? '' : 'none';
+  $('num-locations').style.display      = mode === 'ai'   ? '' : 'none';
+  $('add-relations-btn').style.display  = mode === 'osm'  ? '' : 'none';
+  $('add-ways-btn').style.display       = mode === 'osm'  ? '' : 'none';
+  $('draw-polygon-btn').style.display   = mode === 'draw' ? '' : 'none';
+  $('draw-cancel-btn').style.display    = 'none';  // only appears while actively drawing
 
   const hints = {
-    ai:  ['e.g. boutique design district, mountain ski resort, financial CBD…',
-          'AI mode: describe any location type — Gemini suggests benchmark examples + custom amenity groups.'],
-    osm: ['e.g. 62149, 5750005, 7444  (comma-separated IDs)',
-          'OSM ID mode: paste relation or way IDs from openstreetmap.org and click + Relations or + Ways. Locations are appended to any existing list.'],
+    ai:   ['e.g. boutique design district, mountain ski resort, financial CBD…',
+           'AI mode: describe any location type — Gemini suggests benchmark examples + custom amenity groups.'],
+    osm:  ['e.g. 62149, 5750005, 7444  (comma-separated IDs)',
+           'OSM ID mode: paste relation or way IDs from openstreetmap.org and click + Relations or + Ways.'],
+    draw: ['',
+           'Draw mode: click "Draw polygon" then click the map to place vertices. Double-click to finish, then name your area.'],
   };
-  $('search-input').placeholder = hints[mode][0];
-  $('search-hint').textContent  = hints[mode][1];
+  if (mode !== 'draw') $('search-input').placeholder = hints[mode][0];
+  $('search-hint').textContent = hints[mode][1];
 }
 
 async function loadDefaultGroups() {
@@ -181,6 +215,93 @@ async function loadDefaultGroups() {
       { name:'Culture & Community',color:'#44AA99', items:['bank','cinema','travel_agency','dry_cleaning','laundry','theatre','locksmith','arts_centre','art','music_school','conference_centre','library','place_of_worship','school','kindergarten','childcare','community_centre','social_facility','clubhouse','driving_school'] },
     ]);
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DRAW MODE
+// ═══════════════════════════════════════════════════════════════════════════
+
+function handleDrawPolygon() {
+  $('draw-polygon-btn').disabled = true;
+  $('draw-cancel-btn').style.display = '';
+  setStatus('loading', 'Click the map to place vertices — double-click to finish.');
+
+  _drawCommitHnd = e => {
+    _drawingLayer = e.layer;
+    const input = $('draw-label-input');
+    input.value = '';
+    $('draw-label-modal').style.display = 'flex';
+    setTimeout(() => input.focus(), 50);
+  };
+  state.map.once('editable:drawing:commit', _drawCommitHnd);
+  state.map.editTools.startPolygon();
+}
+
+function cancelDraw() {
+  if (_drawCommitHnd) {
+    state.map.off('editable:drawing:commit', _drawCommitHnd);
+    _drawCommitHnd = null;
+  }
+  if (state.map.editTools) state.map.editTools.stopDrawing();
+  if (_drawingLayer) {
+    state.map.removeLayer(_drawingLayer);
+    _drawingLayer = null;
+  }
+  $('draw-polygon-btn').disabled = false;
+  $('draw-cancel-btn').style.display = 'none';
+  setStatus('idle', 'Draw cancelled.');
+}
+
+function addDrawnPolygon(layer, name) {
+  // Replace the raw drawing layer with a properly styled boundary
+  state.map.removeLayer(layer);
+
+  const geojson = layer.toGeoJSON().geometry;
+  const bounds  = layer.getBounds();
+  const bbox    = [bounds.getSouth(), bounds.getNorth(), bounds.getWest(), bounds.getEast()];
+
+  const loc = {
+    _id:          crypto.randomUUID(),
+    name,
+    display_name: name,
+    country:      '',
+    osm_id:       null,
+    osm_type:     null,
+    geojson,
+    bbox,
+    edited:       true,   // tells fetchOverpass to use poly: filter
+    status:       'ready',
+    selected:     true,
+  };
+
+  state.locations.push(loc);
+
+  // Add chip in ready state immediately (no geocoding needed)
+  const bar = $('locations-bar');
+  bar.classList.add('visible');
+  const chip = document.createElement('div');
+  chip.className = 'location-chip selected';
+  chip.dataset.id = loc._id;
+  chip.innerHTML = `
+    <span class="chip-dot" style="background:var(--green)"></span>
+    <span class="chip-name">${name}</span>
+    <span class="chip-remove" title="Remove">×</span>
+  `;
+  chip.querySelector('.chip-remove').addEventListener('click', e => {
+    e.stopPropagation(); removeLocation(loc._id);
+  });
+  chip.addEventListener('click', () => toggleLocation(loc._id));
+  bar.appendChild(chip);
+
+  showBoundary(loc._id, geojson, name);
+  $('analyze-btn').style.display = '';
+  $('reset-btn').style.display   = '';
+
+  _drawingLayer  = null;
+  _drawCommitHnd = null;
+  $('draw-polygon-btn').disabled     = false;
+  $('draw-cancel-btn').style.display = 'none';
+  setStatus('idle', `"${name}" added — click Analyse to fetch amenities.`);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -26,8 +26,9 @@
 
     <div class="search-wrap">
       <div class="mode-toggle">
-        <button id="mode-ai"  class="mode-btn active" title="AI-suggested benchmark locations">AI&nbsp;Search</button>
-        <button id="mode-osm" class="mode-btn"        title="Enter OSM IDs directly">OSM&nbsp;IDs</button>
+        <button id="mode-ai"   class="mode-btn active" title="AI-suggested benchmark locations">AI&nbsp;Search</button>
+        <button id="mode-osm"  class="mode-btn"        title="Enter OSM IDs directly">OSM&nbsp;IDs</button>
+        <button id="mode-draw" class="mode-btn"        title="Draw a custom polygon on the map">Draw</button>
       </div>
 
       <div class="search-row">
@@ -51,6 +52,10 @@
         <!-- OSM mode controls (hidden in AI mode) -->
         <button id="add-relations-btn" class="btn btn-secondary" style="display:none" title="Add OSM relation IDs">+ Relations</button>
         <button id="add-ways-btn"      class="btn btn-secondary" style="display:none" title="Add OSM way IDs">+ Ways</button>
+
+        <!-- Draw mode controls (hidden in other modes) -->
+        <button id="draw-polygon-btn" class="btn btn-secondary" style="display:none" title="Start drawing a polygon on the map">✎ Draw polygon</button>
+        <button id="draw-cancel-btn"  class="btn btn-ghost"     style="display:none" title="Cancel current drawing">✕ Cancel</button>
 
         <!-- Always visible when locations exist -->
         <button id="analyze-btn" class="btn btn-accent"   style="display:none">↻ Analyse</button>
@@ -123,6 +128,19 @@
 
   <div id="map-ctx-menu" class="map-ctx-menu" style="display:none">
     <button id="ctx-edit-btn">✏ Edit vertices</button>
+  </div>
+
+  <!-- Draw label modal -->
+  <div id="draw-label-modal" class="modal-overlay" style="display:none">
+    <div class="modal-glass">
+      <div class="modal-title">Name this area</div>
+      <input id="draw-label-input" class="modal-input" type="text"
+             placeholder="e.g. Custom District, My Polygon…" autocomplete="off" />
+      <div class="modal-actions">
+        <button id="draw-label-cancel"  class="btn btn-ghost">Cancel</button>
+        <button id="draw-label-confirm" class="btn btn-primary">Add location</button>
+      </div>
+    </div>
   </div>
 
   <script src="app.js"></script>
