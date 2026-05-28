@@ -123,7 +123,7 @@ function bindEvents() {
 
   $('analyze-btn').addEventListener('click', analyzeAmenities);
   $('reset-btn').addEventListener('click',   resetAll);
-  $('download-svg-btn').addEventListener('click', downloadSVG);
+  $('download-png-btn').addEventListener('click', downloadPNG);
   $('download-geojson-btn').addEventListener('click', downloadAmenitiesGeoJSON);
 
   // Draw label modal
@@ -207,7 +207,7 @@ async function loadDefaultGroups() {
       { name:'Dining',             color:'#E69F00', items:['restaurant','restaurant;bar','cafe','coffee','fast_food','biergarten','ice_cream'] },
       { name:'Nightlife',          color:'#D55E00', items:['bar','pub','nightclub','casino'] },
       { name:'Food Retail',        color:'#56B4E9', items:['supermarket','convenience','bakery','butcher','cheese','deli','pastry','chocolate','health_food','alcohol','general','confectionery','wine','farm'] },
-      { name:'Sport & Ski',        color:'#009E73', items:['sports','outdoor','ski','ski_rental','ski_school','avalanche_transceiver','snow_park','bicycle_rental','water_sports','boat_rental','fitness_equipment','lift_tickets','bicycle'] },
+      { name:'Sports & Recreation', color:'#009E73', items:['sports','outdoor','ski','ski_rental','ski_school','avalanche_transceiver','snow_park','bicycle_rental','water_sports','boat_rental','fitness_equipment','lift_tickets','bicycle'] },
       { name:'Fashion & Beauty',   color:'#CC79A7', items:['clothes','shoes','fashion_accessories','leather','tailor','cosmetics','perfumery','beauty','hairdresser','optician'] },
       { name:'Health & Medical',   color:'#0072B2', items:['pharmacy','clinic','doctors','hospital','dentist','medical_supply','hearing_aids','chemist','veterinary','massage','public_bath'] },
       { name:'Gifts & Speciality', color:'#F0E442', items:['gift','jewelry','second_hand','variety_store','craft','toys','florist','stationery','books','newsagent','kiosk','photo','tobacco'] },
@@ -1059,30 +1059,123 @@ function buildLegend(groups) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// SVG DOWNLOAD
+// PNG DOWNLOAD — bubble chart + legend rendered on a single canvas
 // ═══════════════════════════════════════════════════════════════════════════
 
-function downloadSVG() {
+async function downloadPNG() {
   const svgEl = document.getElementById('bubble-svg');
   if (!svgEl || !svgEl.children.length) return;
 
+  const data = buildNormalizedDiagramData();
+  if (!data.groups.length) return;
+
+  const SCALE     = 2;          // retina
+  const W         = 960;
+  const CHART_H   = 580;
+  const LEG_PAD   = 24;
+  const LEG_ROW_H = 22;
+  const LEG_TTL_H = 30;
+  const cols      = 2;
+  const rows      = Math.ceil(data.groups.length / cols);
+  const LEG_H     = LEG_TTL_H + rows * LEG_ROW_H + LEG_PAD;
+  const TOTAL_H   = CHART_H + LEG_H;
+
+  const canvas = document.createElement('canvas');
+  canvas.width  = W * SCALE;
+  canvas.height = TOTAL_H * SCALE;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(SCALE, SCALE);
+
+  // ── Background
+  ctx.fillStyle = '#dce3ea';
+  ctx.fillRect(0, 0, W, TOTAL_H);
+
+  // ── Bubble chart: serialize SVG → blob → Image → canvas
+  const vb   = svgEl.viewBox.baseVal;
+  const srcW = vb?.width  || svgEl.clientWidth  || W;
+  const srcH = vb?.height || svgEl.clientHeight || CHART_H;
+
   const clone = svgEl.cloneNode(true);
   clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+  clone.setAttribute('width',   W);
+  clone.setAttribute('height',  CHART_H);
+  clone.setAttribute('viewBox', `0 0 ${srcW} ${srcH}`);
 
-  const style = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-  style.textContent = [
-    "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@600;700&display=swap');",
-    '.bubble-label{font-family:"Inter",system-ui,sans-serif;font-weight:600;text-anchor:middle;dominant-baseline:middle;fill:white;pointer-events:none;}',
-  ].join('');
-  clone.insertBefore(style, clone.firstChild);
+  // Reset any zoom transform on the outermost group so PNG always shows full chart
+  const outerG = clone.querySelector('g');
+  if (outerG) outerG.removeAttribute('transform');
 
-  const svgStr = new XMLSerializer().serializeToString(clone);
-  const blob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url; a.download = 'amenity-ecosystem.svg';
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a); URL.revokeObjectURL(url);
+  const styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+  styleEl.textContent =
+    '.bubble-label{font-family:system-ui,sans-serif;font-weight:600;' +
+    'text-anchor:middle;dominant-baseline:middle;fill:white;pointer-events:none;}';
+  clone.insertBefore(styleEl, clone.firstChild);
+
+  // Solid background inside the SVG
+  const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  bgRect.setAttribute('width', srcW); bgRect.setAttribute('height', srcH);
+  bgRect.setAttribute('fill', '#dce3ea');
+  clone.insertBefore(bgRect, clone.children[1] || null);
+
+  const svgStr  = new XMLSerializer().serializeToString(clone);
+  const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
+  const svgUrl  = URL.createObjectURL(svgBlob);
+
+  await new Promise((resolve, reject) => {
+    const img  = new Image();
+    img.onload = () => { ctx.drawImage(img, 0, 0, W, CHART_H); URL.revokeObjectURL(svgUrl); resolve(); };
+    img.onerror = reject;
+    img.src = svgUrl;
+  });
+
+  // ── Legend panel
+  ctx.fillStyle = 'rgba(255,255,255,0.76)';
+  ctx.fillRect(0, CHART_H, W, LEG_H);
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.07)';
+  ctx.lineWidth   = 1;
+  ctx.beginPath(); ctx.moveTo(0, CHART_H); ctx.lineTo(W, CHART_H); ctx.stroke();
+
+  // Section label
+  ctx.font      = '700 9px system-ui, sans-serif';
+  ctx.fillStyle = '#999';
+  ctx.fillText('AMENITY  GROUPS', LEG_PAD, CHART_H + 18);
+
+  // Legend rows — 2 columns
+  const colW = W / cols;
+  data.groups.forEach((g, i) => {
+    const col = i % cols;
+    const row = Math.floor(i / cols);
+    const x   = col * colW + LEG_PAD;
+    const y   = CHART_H + LEG_TTL_H + row * LEG_ROW_H;
+
+    // Colour swatch
+    ctx.fillStyle = g.color;
+    ctx.fillRect(x, y - 7, 9, 9);
+
+    // Group name (bold)
+    ctx.font      = '700 11.5px system-ui, sans-serif';
+    ctx.fillStyle = '#1a1a1a';
+    ctx.fillText(g.id, x + 14, y + 1);
+    const nameW = ctx.measureText(g.id).width;
+
+    // Percentage · avg count (muted)
+    ctx.font      = '400 11.5px system-ui, sans-serif';
+    ctx.fillStyle = '#666';
+    ctx.fillText(
+      `  ${(g.total * 100).toFixed(1)}%  ·  avg ~${Math.round(g.total_count)}`,
+      x + 14 + nameW, y + 1
+    );
+  });
+
+  // ── Export
+  canvas.toBlob(blob => {
+    const a = document.createElement('a');
+    a.href  = URL.createObjectURL(blob);
+    a.download = 'amenity-ecosystem.png';
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+  }, 'image/png');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
