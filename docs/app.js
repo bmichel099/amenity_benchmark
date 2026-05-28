@@ -123,7 +123,7 @@ function bindEvents() {
 
   $('analyze-btn').addEventListener('click', analyzeAmenities);
   $('reset-btn').addEventListener('click',   resetAll);
-  $('download-png-btn').addEventListener('click', downloadPNG);
+  $('download-svg-btn').addEventListener('click', downloadSVG);
   $('download-geojson-btn').addEventListener('click', downloadAmenitiesGeoJSON);
 
   // Draw label modal
@@ -1059,19 +1059,20 @@ function buildLegend(groups) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// PNG DOWNLOAD — bubble chart + legend rendered on a single canvas
+// SVG DOWNLOAD — bubble chart + legend in one standalone SVG
 // ═══════════════════════════════════════════════════════════════════════════
 
-async function downloadPNG() {
+function downloadSVG() {
   const svgEl = document.getElementById('bubble-svg');
   if (!svgEl || !svgEl.children.length) return;
 
   const data = buildNormalizedDiagramData();
   if (!data.groups.length) return;
 
-  const SCALE     = 2;          // retina
-  const W         = 960;
-  const CHART_H   = 580;
+  const vb     = svgEl.viewBox.baseVal;
+  const W      = vb?.width  || svgEl.clientWidth  || 960;
+  const CHART_H = vb?.height || svgEl.clientHeight || 580;
+
   const LEG_PAD   = 24;
   const LEG_ROW_H = 22;
   const LEG_TTL_H = 30;
@@ -1080,66 +1081,55 @@ async function downloadPNG() {
   const LEG_H     = LEG_TTL_H + rows * LEG_ROW_H + LEG_PAD;
   const TOTAL_H   = CHART_H + LEG_H;
 
-  const canvas = document.createElement('canvas');
-  canvas.width  = W * SCALE;
-  canvas.height = TOTAL_H * SCALE;
-  const ctx = canvas.getContext('2d');
-  ctx.scale(SCALE, SCALE);
+  const ns  = 'http://www.w3.org/2000/svg';
+  const out = document.createElementNS(ns, 'svg');
+  out.setAttribute('xmlns', ns);
+  out.setAttribute('width',   W);
+  out.setAttribute('height',  TOTAL_H);
+  out.setAttribute('viewBox', `0 0 ${W} ${TOTAL_H}`);
 
-  // ── Background
-  ctx.fillStyle = '#dce3ea';
-  ctx.fillRect(0, 0, W, TOTAL_H);
+  // Embed Inter from Google Fonts
+  const style = document.createElementNS(ns, 'style');
+  style.textContent =
+    "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');" +
+    'text{font-family:"Inter",system-ui,sans-serif;}' +
+    '.bubble-label{font-weight:600;text-anchor:middle;dominant-baseline:middle;fill:white;pointer-events:none;}';
+  out.appendChild(style);
 
-  // ── Bubble chart: serialize SVG → blob → Image → canvas
-  const vb   = svgEl.viewBox.baseVal;
-  const srcW = vb?.width  || svgEl.clientWidth  || W;
-  const srcH = vb?.height || svgEl.clientHeight || CHART_H;
+  // Background
+  const bg = document.createElementNS(ns, 'rect');
+  bg.setAttribute('width', W); bg.setAttribute('height', TOTAL_H);
+  bg.setAttribute('fill', '#dce3ea');
+  out.appendChild(bg);
 
-  const clone = svgEl.cloneNode(true);
-  clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
-  clone.setAttribute('width',   W);
-  clone.setAttribute('height',  CHART_H);
-  clone.setAttribute('viewBox', `0 0 ${srcW} ${srcH}`);
-
-  // Reset any zoom transform on the outermost group so PNG always shows full chart
-  const outerG = clone.querySelector('g');
+  // ── Bubble chart — clone live SVG contents, reset any zoom transform
+  const chartClone = svgEl.cloneNode(true);
+  const outerG = chartClone.querySelector('g');
   if (outerG) outerG.removeAttribute('transform');
-
-  const styleEl = document.createElementNS('http://www.w3.org/2000/svg', 'style');
-  styleEl.textContent =
-    '.bubble-label{font-family:system-ui,sans-serif;font-weight:600;' +
-    'text-anchor:middle;dominant-baseline:middle;fill:white;pointer-events:none;}';
-  clone.insertBefore(styleEl, clone.firstChild);
-
-  // Solid background inside the SVG
-  const bgRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-  bgRect.setAttribute('width', srcW); bgRect.setAttribute('height', srcH);
-  bgRect.setAttribute('fill', '#dce3ea');
-  clone.insertBefore(bgRect, clone.children[1] || null);
-
-  const svgStr  = new XMLSerializer().serializeToString(clone);
-  const svgBlob = new Blob([svgStr], { type: 'image/svg+xml;charset=utf-8' });
-  const svgUrl  = URL.createObjectURL(svgBlob);
-
-  await new Promise((resolve, reject) => {
-    const img  = new Image();
-    img.onload = () => { ctx.drawImage(img, 0, 0, W, CHART_H); URL.revokeObjectURL(svgUrl); resolve(); };
-    img.onerror = reject;
-    img.src = svgUrl;
-  });
+  Array.from(chartClone.childNodes).forEach(n => out.appendChild(n.cloneNode(true)));
 
   // ── Legend panel
-  ctx.fillStyle = 'rgba(255,255,255,0.76)';
-  ctx.fillRect(0, CHART_H, W, LEG_H);
+  const legG = document.createElementNS(ns, 'g');
+  legG.setAttribute('transform', `translate(0,${CHART_H})`);
 
-  ctx.strokeStyle = 'rgba(0,0,0,0.07)';
-  ctx.lineWidth   = 1;
-  ctx.beginPath(); ctx.moveTo(0, CHART_H); ctx.lineTo(W, CHART_H); ctx.stroke();
+  const legBg = document.createElementNS(ns, 'rect');
+  legBg.setAttribute('width', W); legBg.setAttribute('height', LEG_H);
+  legBg.setAttribute('fill', 'rgba(255,255,255,0.76)');
+  legG.appendChild(legBg);
 
-  // Section label
-  ctx.font      = '700 9px system-ui, sans-serif';
-  ctx.fillStyle = '#999';
-  ctx.fillText('AMENITY  GROUPS', LEG_PAD, CHART_H + 18);
+  const sep = document.createElementNS(ns, 'line');
+  sep.setAttribute('x1', 0); sep.setAttribute('x2', W);
+  sep.setAttribute('y1', 0); sep.setAttribute('y2', 0);
+  sep.setAttribute('stroke', 'rgba(0,0,0,0.07)'); sep.setAttribute('stroke-width', '1');
+  legG.appendChild(sep);
+
+  // Section title
+  const title = document.createElementNS(ns, 'text');
+  title.setAttribute('x', LEG_PAD); title.setAttribute('y', 18);
+  title.setAttribute('font-size', '9'); title.setAttribute('font-weight', '700');
+  title.setAttribute('letter-spacing', '0.12em'); title.setAttribute('fill', '#999');
+  title.textContent = 'AMENITY GROUPS';
+  legG.appendChild(title);
 
   // Legend rows — 2 columns
   const colW = W / cols;
@@ -1147,35 +1137,38 @@ async function downloadPNG() {
     const col = i % cols;
     const row = Math.floor(i / cols);
     const x   = col * colW + LEG_PAD;
-    const y   = CHART_H + LEG_TTL_H + row * LEG_ROW_H;
+    const y   = LEG_TTL_H + row * LEG_ROW_H;
 
-    // Colour swatch
-    ctx.fillStyle = g.color;
-    ctx.fillRect(x, y - 7, 9, 9);
+    const swatch = document.createElementNS(ns, 'rect');
+    swatch.setAttribute('x', x); swatch.setAttribute('y', y - 7);
+    swatch.setAttribute('width', 9); swatch.setAttribute('height', 9);
+    swatch.setAttribute('rx', 2); swatch.setAttribute('fill', g.color);
+    legG.appendChild(swatch);
 
-    // Group name (bold)
-    ctx.font      = '700 11.5px system-ui, sans-serif';
-    ctx.fillStyle = '#1a1a1a';
-    ctx.fillText(g.id, x + 14, y + 1);
-    const nameW = ctx.measureText(g.id).width;
+    const row_t = document.createElementNS(ns, 'text');
+    row_t.setAttribute('x', x + 14); row_t.setAttribute('y', y + 1);
+    row_t.setAttribute('font-size', '11.5');
 
-    // Percentage · avg count (muted)
-    ctx.font      = '400 11.5px system-ui, sans-serif';
-    ctx.fillStyle = '#666';
-    ctx.fillText(
-      `  ${(g.total * 100).toFixed(1)}%  ·  avg ~${Math.round(g.total_count)}`,
-      x + 14 + nameW, y + 1
-    );
+    const name = document.createElementNS(ns, 'tspan');
+    name.setAttribute('font-weight', '700'); name.setAttribute('fill', '#1a1a1a');
+    name.textContent = g.id;
+    row_t.appendChild(name);
+
+    const stat = document.createElementNS(ns, 'tspan');
+    stat.setAttribute('font-weight', '400'); stat.setAttribute('fill', '#666');
+    stat.textContent = `  ${(g.total * 100).toFixed(1)}%  ·  avg ~${Math.round(g.total_count)}`;
+    row_t.appendChild(stat);
+
+    legG.appendChild(row_t);
   });
 
-  // ── Export
-  canvas.toBlob(blob => {
-    const a = document.createElement('a');
-    a.href  = URL.createObjectURL(blob);
-    a.download = 'amenity-ecosystem.png';
-    document.body.appendChild(a); a.click();
-    document.body.removeChild(a);
-  }, 'image/png');
+  out.appendChild(legG);
+
+  const blob = new Blob([new XMLSerializer().serializeToString(out)], { type: 'image/svg+xml;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'amenity-ecosystem.svg';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
