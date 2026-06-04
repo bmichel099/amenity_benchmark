@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="style.css?v=4" />
+  <link rel="stylesheet" href="style.css?v=5" />
 </head>
 
 <body>
@@ -296,7 +296,27 @@
     </div>
   </div>
 
-  <script src="app.js?v=4"></script>
-  <script src="population.js?v=4"></script>
+  <!-- Generic error alert modal -->
+  <div id="alert-modal" class="modal-overlay" style="display:none">
+    <div class="modal-glass">
+      <div class="modal-title" id="alert-modal-title">Error</div>
+      <div id="alert-modal-body" class="empty-text" style="margin-bottom:20px;text-align:left"></div>
+      <div class="modal-actions">
+        <button id="alert-modal-ok" class="btn btn-primary">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Gemini thinking modal -->
+  <div id="thinking-modal" class="modal-overlay" style="display:none">
+    <div class="modal-glass thinking-glass">
+      <div class="thinking-spinner"></div>
+      <div class="modal-title" style="margin-bottom:6px">Gemini is thinking…</div>
+      <div id="thinking-detail" class="empty-text"></div>
+    </div>
+  </div>
+
+  <script src="app.js?v=5"></script>
+  <script src="population.js?v=5"></script>
 </body>
 </html>

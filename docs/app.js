@@ -71,6 +71,23 @@ function setStatus(type, msg) {
   $('status-msg').textContent = msg;
 }
 
+// ── Shared modal helpers ─────────────────────────────────────────────────────
+
+function showAlert(message, title = 'Error') {
+  $('alert-modal-title').textContent = title;
+  $('alert-modal-body').textContent  = message;
+  $('alert-modal').style.display     = 'flex';
+}
+
+function showThinking(detail = '') {
+  $('thinking-detail').textContent   = detail;
+  $('thinking-modal').style.display  = 'flex';
+}
+
+function hideThinking() {
+  $('thinking-modal').style.display  = 'none';
+}
+
 function setGroups(groups) {
   state.groups = groups;
   state.amenityToGroup = {};
@@ -92,6 +109,14 @@ window.addEventListener('DOMContentLoaded', () => {
   bindEvents();
   loadDefaultGroups();
   setMode('ai');
+
+  // Alert modal OK
+  $('alert-modal-ok').addEventListener('click', () => {
+    $('alert-modal').style.display = 'none';
+  });
+  $('alert-modal').addEventListener('click', e => {
+    if (e.target === $('alert-modal')) $('alert-modal').style.display = 'none';
+  });
 });
 
 function initMap() {
@@ -321,16 +346,19 @@ async function handleOsmAdd(osmType) {
 }
 
 async function aiSearch(category) {
+  const numLocations = parseInt($('num-locations').value, 10) || 15;
   setStatus('loading', `Asking Gemini for "${category}" benchmark locations…`);
+  showThinking(`Suggesting ${numLocations} benchmark locations for "${category}"…`);
   $('search-btn').disabled = true;
 
   try {
-    const numLocations = parseInt($('num-locations').value, 10) || 15;
     const res = await fetch('/api/suggest', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ category, num_locations: numLocations }),
     });
+
+    hideThinking();
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
@@ -359,7 +387,9 @@ async function aiSearch(category) {
     }
     setStatus('idle', `${locs.length} locations ready · ${state.groups.length} amenity groups. Click Analyse.`);
   } catch (e) {
+    hideThinking();
     setStatus('error', `AI search failed: ${e.message}`);
+    showAlert(e.message, 'AI Search Failed');
   } finally {
     $('search-btn').disabled = false;
   }

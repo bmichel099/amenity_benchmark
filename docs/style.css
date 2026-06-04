@@ -788,6 +788,22 @@ header {
 .info-list li strong { font-weight: 600; }
 .info-list li span { color: var(--text-2); }
 
+/* ── Thinking modal (Gemini) ─────────────────────────────────────────────── */
+.thinking-glass {
+  text-align: center;
+  padding: 36px 40px 32px;
+  width: 320px;
+}
+.thinking-spinner {
+  width: 40px; height: 40px;
+  border: 3px solid rgba(0,0,0,0.08);
+  border-top-color: var(--gold);
+  border-radius: 50%;
+  animation: spin 0.85s linear infinite;
+  margin: 0 auto 20px;
+}
+.thinking-glass .modal-title { margin-bottom: 6px; }
+
 /* ── Circle-buffer radius readout ────────────────────────────────────────── */
 .radius-readout {
   position: absolute;

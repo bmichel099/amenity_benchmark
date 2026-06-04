@@ -245,6 +245,7 @@ async function onFileChosen(e) {
     }
   } catch (err) {
     setStatus('error', `Shapefile error: ${err.message}`);
+    showAlert(err.message, 'Shapefile Upload Error');
   }
 }
 
@@ -450,6 +451,7 @@ async function popEstimate() {
     $('pop-empty').querySelector('.empty-text').innerHTML =
       `<strong>Estimate failed</strong><br>${err.message}`;
     setStatus('error', `Population estimate failed: ${err.message}`);
+    showAlert(err.message, 'Population Estimate Failed');
   } finally {
     $('pop-estimate-btn').disabled = false;
   }
