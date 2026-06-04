@@ -156,7 +156,7 @@ def estimate_population(features: list[dict]) -> dict:
     return {"results": results, "total": round(total)}
 
 
-MAX_UPLOAD_FEATURES = 2_000
+MAX_UPLOAD_FEATURES = 50
 MAX_UPLOAD_BYTES    = 20 * 1024 * 1024   # 20 MB zip
 
 
