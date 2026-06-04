@@ -27,13 +27,29 @@ window.addEventListener('DOMContentLoaded', () => {
   bindPopEvents();
 });
 
+let _activeTab = 'amenity';
+
 function initTabs() {
   $('tab-amenity').addEventListener('click',    () => switchTab('amenity'));
   $('tab-population').addEventListener('click', () => switchTab('population'));
+
+  // Help (?) → info modal for the active tool
+  $('help-btn').addEventListener('click', () => {
+    const id = _activeTab === 'population' ? 'info-population-modal' : 'info-amenity-modal';
+    $(id).style.display = 'flex';
+  });
+  document.querySelectorAll('.info-close').forEach(b =>
+    b.addEventListener('click', () => {
+      $('info-amenity-modal').style.display = 'none';
+      $('info-population-modal').style.display = 'none';
+    }));
+  document.querySelectorAll('#info-amenity-modal, #info-population-modal').forEach(m =>
+    m.addEventListener('click', e => { if (e.target === m) m.style.display = 'none'; }));
 }
 
 function switchTab(tab) {
   const amenity = tab === 'amenity';
+  _activeTab = tab;
   $('tab-amenity').classList.toggle('active', amenity);
   $('tab-population').classList.toggle('active', !amenity);
   $('amenity-toolbar').style.display    = amenity ? '' : 'none';
@@ -42,10 +58,12 @@ function switchTab(tab) {
   $('view-population').style.display    = amenity ? 'none' : '';
 
   if (amenity) {
-    setTimeout(() => state.map && state.map.invalidateSize(), 60);
+    setTimeout(() => state.map && state.map.invalidateSize(), 120);
   } else {
     initPopMap();
-    setTimeout(() => popState.map && popState.map.invalidateSize(), 60);
+    // Two passes: once the container is laid out, and again after the transition
+    setTimeout(() => popState.map && popState.map.invalidateSize(), 120);
+    setTimeout(() => popState.map && popState.map.invalidateSize(), 400);
   }
 }
 

@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="style.css?v=4" />
 </head>
 
 <body>
@@ -88,6 +88,8 @@
         Draw polygons, drag circle buffers, or upload a zipped shapefile (point or polygon) — then click Estimate to sum GHSL population.
       </p>
     </div>
+
+    <button id="help-btn" class="help-btn" title="About this tool" aria-label="About this tool">?</button>
   </header>
 
   <!-- ════════════════ VIEW: AMENITY ECOSYSTEM ════════════════ -->
@@ -240,7 +242,61 @@
     </div>
   </div>
 
-  <script src="app.js"></script>
-  <script src="population.js"></script>
+  <!-- Info modal: Amenity Ecosystem -->
+  <div id="info-amenity-modal" class="modal-overlay" style="display:none">
+    <div class="modal-glass modal-wide">
+      <div class="modal-title">Amenity Ecosystem</div>
+      <div class="info-body">
+        <p>Benchmark the amenity mix of places worldwide. Describe a location type and
+           Gemini suggests comparable real-world examples plus a custom set of amenity
+           groups; the app pulls every shop &amp; amenity from OpenStreetMap inside each
+           boundary and renders a normalised bubble chart so you can compare the
+           “ecosystem” across locations.</p>
+        <h4>Three ways to add locations</h4>
+        <ul class="info-list">
+          <li><strong>AI Search</strong> — <span>describe a place type (e.g. “boutique design district”) and pick how many benchmarks to generate.</span></li>
+          <li><strong>OSM IDs</strong> — <span>paste specific OpenStreetMap relation or way IDs.</span></li>
+          <li><strong>Draw</strong> — <span>draw your own boundary polygon and name it.</span></li>
+        </ul>
+        <h4>Tips</h4>
+        <ul class="info-list">
+          <li><span>Right-click any polygon to edit its vertices.</span></li>
+          <li><span>Click <strong>Analyse</strong> to fetch amenities, then download the chart (SVG) or the raw amenities (GeoJSON).</span></li>
+        </ul>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary info-close">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Info modal: Population Estimate -->
+  <div id="info-population-modal" class="modal-overlay" style="display:none">
+    <div class="modal-glass modal-wide">
+      <div class="modal-title">Population Estimate</div>
+      <div class="info-body">
+        <p>Estimate the population living inside any set of areas using the
+           <strong>GHSL 100&nbsp;m (2025)</strong> global population raster. Population is
+           summed per area with exact partial-pixel coverage.</p>
+        <h4>Define areas in three ways</h4>
+        <ul class="info-list">
+          <li><strong>Draw polygon</strong> — <span>click to place vertices, double-click to finish.</span></li>
+          <li><strong>Circle buffer</strong> — <span>drag a circular buffer from a point; the radius (km) shows live and stays editable.</span></li>
+          <li><strong>Upload shapefile</strong> — <span>a zipped shapefile/GeoJSON; point layers prompt for a buffer radius.</span></li>
+        </ul>
+        <h4>Tips</h4>
+        <ul class="info-list">
+          <li><span>Right-click a polygon to edit its vertices; drag a circle’s handle to resize.</span></li>
+          <li><span>Click <strong>Estimate population</strong>, then download results as GeoJSON, CSV, or Shapefile with the population attributes appended.</span></li>
+        </ul>
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-primary info-close">Got it</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js?v=4"></script>
+  <script src="population.js?v=4"></script>
 </body>
 </html>
