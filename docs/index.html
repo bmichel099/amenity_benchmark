@@ -24,7 +24,13 @@
       <span class="app-title">Amenity Benchmark</span>
     </div>
 
-    <div class="search-wrap">
+    <nav class="tab-bar">
+      <button id="tab-amenity"    class="tab-btn active" title="Benchmark amenity ecosystems">Amenity&nbsp;Ecosystem</button>
+      <button id="tab-population" class="tab-btn"        title="Estimate population inside polygons (GHSL)">Population&nbsp;Estimate</button>
+    </nav>
+
+    <!-- Amenity toolbar -->
+    <div class="search-wrap" id="amenity-toolbar">
       <div class="mode-toggle">
         <button id="mode-ai"   class="mode-btn active" title="AI-suggested benchmark locations">AI&nbsp;Search</button>
         <button id="mode-osm"  class="mode-btn"        title="Enter OSM IDs directly">OSM&nbsp;IDs</button>
@@ -66,7 +72,26 @@
         AI mode: describe any location type — Gemini suggests benchmark examples worldwide and defines context-specific amenity groups.
       </p>
     </div>
+
+    <!-- Population toolbar -->
+    <div class="search-wrap" id="population-toolbar" style="display:none">
+      <div class="search-row">
+        <button id="pop-draw-polygon-btn" class="btn btn-secondary" title="Draw a polygon on the map">✎ Draw polygon</button>
+        <button id="pop-draw-circle-btn"  class="btn btn-secondary" title="Drag a circular buffer from a point">◯ Circle buffer</button>
+        <button id="pop-upload-btn"       class="btn btn-secondary" title="Upload a zipped shapefile (.zip)">⬆ Upload shapefile</button>
+        <input  id="pop-file-input" type="file" accept=".zip,.geojson,.json" style="display:none" />
+        <button id="pop-cancel-btn"   class="btn btn-ghost"    style="display:none" title="Cancel current drawing">✕ Cancel</button>
+        <button id="pop-estimate-btn" class="btn btn-primary"  style="display:none">Σ Estimate population</button>
+        <button id="pop-reset-btn"    class="btn btn-ghost"    style="display:none" title="Clear all areas">✕ Reset</button>
+      </div>
+      <p id="pop-hint" class="search-hint">
+        Draw polygons, drag circle buffers, or upload a zipped shapefile (point or polygon) — then click Estimate to sum GHSL population.
+      </p>
+    </div>
   </header>
+
+  <!-- ════════════════ VIEW: AMENITY ECOSYSTEM ════════════════ -->
+  <div id="view-amenity" class="view">
 
   <!-- ── Location chips bar ── -->
   <div id="locations-bar" class="locations-bar"></div>
@@ -117,6 +142,55 @@
 
     </section>
   </main>
+  </div><!-- /view-amenity -->
+
+  <!-- ════════════════ VIEW: POPULATION ESTIMATE ════════════════ -->
+  <div id="view-population" class="view" style="display:none">
+
+    <div id="pop-bar" class="locations-bar"></div>
+
+    <main class="main">
+      <!-- Left: map -->
+      <section class="map-panel">
+        <div id="pop-map"></div>
+        <div class="map-overlay-bottom">
+          <div id="pop-stats" class="map-stats" style="display:none"></div>
+        </div>
+        <div id="pop-radius-readout" class="radius-readout" style="display:none"></div>
+      </section>
+
+      <!-- Right: results -->
+      <section class="diagram-panel">
+
+        <div id="pop-empty" class="empty-state">
+          <div class="empty-icon">◍</div>
+          <div class="empty-title">No areas yet</div>
+          <div class="empty-text">
+            <strong>Draw</strong> a polygon or circle buffer, or <strong>upload</strong> a shapefile.<br>
+            Then click <strong>Estimate population</strong>.
+          </div>
+        </div>
+
+        <div id="pop-loading" class="empty-state" style="display:none">
+          <div class="spinner"></div>
+          <div class="empty-title">Estimating…</div>
+          <div id="pop-loading-detail" class="empty-text">Reading GHSL raster</div>
+        </div>
+
+        <div id="pop-content" style="display:none">
+          <div class="diagram-header">
+            <div class="diagram-header-text">
+              <div class="diagram-title">Population estimate — GHSL 100m, 2025</div>
+              <div id="pop-total" class="pop-total"></div>
+            </div>
+            <button id="pop-download-btn" class="btn-icon" title="Download results as GeoJSON">⬇ GeoJSON</button>
+          </div>
+          <div id="pop-results" class="pop-results"></div>
+        </div>
+
+      </section>
+    </main>
+  </div><!-- /view-population -->
 
   <!-- ── Status bar ── -->
   <div class="status-bar">
@@ -143,6 +217,24 @@
     </div>
   </div>
 
+  <!-- Buffer-distance modal (point shapefiles) -->
+  <div id="buffer-modal" class="modal-overlay" style="display:none">
+    <div class="modal-glass">
+      <div class="modal-title">Buffer distance</div>
+      <div class="empty-text" style="margin-bottom:14px; text-align:left">
+        The uploaded layer contains <strong id="buffer-count">point</strong> features.
+        Enter a radius (km) to draw a circular buffer around each.
+      </div>
+      <input id="buffer-input" class="modal-input" type="number" min="0.1" step="0.1"
+             value="1" placeholder="e.g. 1.5" autocomplete="off" />
+      <div class="modal-actions">
+        <button id="buffer-cancel"  class="btn btn-ghost">Cancel</button>
+        <button id="buffer-confirm" class="btn btn-primary">Add buffers</button>
+      </div>
+    </div>
+  </div>
+
   <script src="app.js"></script>
+  <script src="population.js"></script>
 </body>
 </html>

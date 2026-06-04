@@ -12,21 +12,33 @@ All OSM data fetching (Nominatim + Overpass) still happens in the browser.
 Deployment on Render:
   - Build:  pip install -r requirements.txt
   - Start:  uvicorn app:app --host 0.0.0.0 --port $PORT
-  - Env:    GOOGLE_AI_API_KEY (mandatory)
+  - Env:    GOOGLE_AI_API_KEY (mandatory for the amenity tool)
+            GHSL_RASTER_URL   (optional — COG URL for the population tool,
+                               e.g. https://<bucket>.r2.dev/ghs_pop_2025_cog.tif)
 """
 
 import json
 import os
+from typing import Any
 
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from amenity_config import AMENITY_VOCABULARY, DEFAULT_GROUPS
+
+# The population tool pulls in heavy geospatial deps (rasterio/geopandas/
+# exactextract). Import lazily so the amenity tool still boots if they're absent.
+try:
+    import population
+    _POP_IMPORT_ERROR = ""
+except Exception as exc:  # pragma: no cover - depends on optional deps
+    population = None
+    _POP_IMPORT_ERROR = str(exc)
 
 load_dotenv()
 
@@ -52,6 +64,17 @@ def get_client() -> genai.Client:
 class SuggestRequest(BaseModel):
     category: str
     num_locations: int = Field(default=15, ge=1, le=30)
+
+
+class PopFeature(BaseModel):
+    id: Any = None
+    name: str | None = None
+    geometry: dict                       # GeoJSON geometry
+    buffer_km: float | None = None       # buffers points / circle markers
+
+
+class PopulationRequest(BaseModel):
+    features: list[PopFeature]
 
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
@@ -199,7 +222,45 @@ async def defaults():
 
 @app.get("/api/health")
 async def health():
-    return {"ok": True, "ai_configured": bool(GOOGLE_AI_KEY), "model": GEMINI_MODEL}
+    return {
+        "ok": True,
+        "ai_configured": bool(GOOGLE_AI_KEY),
+        "model": GEMINI_MODEL,
+        "population_available": population is not None,
+        "population_configured": bool(population and population.raster_configured()),
+    }
+
+
+# ── Population estimate ─────────────────────────────────────────────────────────
+
+
+def _require_population():
+    if population is None:
+        raise HTTPException(503, f"Population tool unavailable (geo deps missing): {_POP_IMPORT_ERROR}")
+    if not population.raster_configured():
+        raise HTTPException(503, "GHSL_RASTER_URL not configured on the server")
+
+
+@app.post("/api/population")
+async def population_estimate(req: PopulationRequest):
+    """Estimate population inside each submitted polygon/buffer via GHSL zonal sum."""
+    _require_population()
+    try:
+        return population.estimate_population([f.model_dump() for f in req.features])
+    except Exception as exc:
+        raise HTTPException(502, f"Population estimate failed: {exc}") from exc
+
+
+@app.post("/api/shapefile")
+async def parse_shapefile(file: UploadFile = File(...)):
+    """Parse an uploaded zipped shapefile → GeoJSON (WGS84) + geometry type."""
+    if population is None:
+        raise HTTPException(503, f"Population tool unavailable (geo deps missing): {_POP_IMPORT_ERROR}")
+    try:
+        data = await file.read()
+        return population.parse_shapefile(data)
+    except Exception as exc:
+        raise HTTPException(400, f"Could not read shapefile: {exc}") from exc
 
 
 # ── Static frontend ───────────────────────────────────────────────────────────
