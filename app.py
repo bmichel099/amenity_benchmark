@@ -25,7 +25,7 @@ from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, UploadFile, File
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -75,6 +75,17 @@ class PopFeature(BaseModel):
 
 class PopulationRequest(BaseModel):
     features: list[PopFeature]
+
+
+class PopResult(BaseModel):
+    id: Any = None
+    population: int | None = None
+    area_km2: float | None = None
+
+
+class PopulationExportRequest(BaseModel):
+    features: list[PopFeature]
+    results: list[PopResult] = []
 
 
 # ── Prompt ────────────────────────────────────────────────────────────────────
@@ -249,6 +260,25 @@ async def population_estimate(req: PopulationRequest):
         return population.estimate_population([f.model_dump() for f in req.features])
     except Exception as exc:
         raise HTTPException(502, f"Population estimate failed: {exc}") from exc
+
+
+@app.post("/api/population/export")
+async def population_export(req: PopulationExportRequest):
+    """Return a zipped shapefile with population estimates appended as attributes."""
+    if population is None:
+        raise HTTPException(503, f"Population tool unavailable: {_POP_IMPORT_ERROR}")
+    try:
+        data = population.export_shapefile(
+            [f.model_dump() for f in req.features],
+            [r.model_dump() for r in req.results],
+        )
+        return Response(
+            content=data,
+            media_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="population_estimate.zip"'},
+        )
+    except Exception as exc:
+        raise HTTPException(502, f"Shapefile export failed: {exc}") from exc
 
 
 @app.post("/api/shapefile")

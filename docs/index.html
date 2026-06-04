@@ -183,7 +183,9 @@
               <div class="diagram-title">Population estimate — GHSL 100m, 2025</div>
               <div id="pop-total" class="pop-total"></div>
             </div>
-            <button id="pop-download-btn" class="btn-icon" title="Download results as GeoJSON">⬇ GeoJSON</button>
+            <button id="pop-download-geojson-btn" class="btn-icon" title="Download as GeoJSON">⬇ GeoJSON</button>
+            <button id="pop-download-csv-btn"     class="btn-icon" title="Download as CSV">⬇ CSV</button>
+            <button id="pop-download-shp-btn"     class="btn-icon" title="Download as Shapefile (ZIP)">⬇ SHP</button>
           </div>
           <div id="pop-results" class="pop-results"></div>
         </div>
@@ -202,6 +204,10 @@
 
   <div id="map-ctx-menu" class="map-ctx-menu" style="display:none">
     <button id="ctx-edit-btn">✏ Edit vertices</button>
+  </div>
+
+  <div id="pop-ctx-menu" class="map-ctx-menu" style="display:none">
+    <button id="pop-ctx-edit-btn">✏ Edit vertices</button>
   </div>
 
   <!-- Draw label modal -->

@@ -14,6 +14,7 @@ polygon is the (area-weighted) sum of the cells it covers. exactextract handles
 partial-edge-pixel coverage exactly.
 """
 
+import io
 import os
 import tempfile
 import zipfile
@@ -33,7 +34,8 @@ os.environ.setdefault("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES")
 
 GHSL_RASTER_URL = os.getenv("GHSL_RASTER_URL", "")
 
-WGS84 = "EPSG:4326"
+WGS84           = "EPSG:4326"
+MOLLWEIDE       = "ESRI:54009"   # native GHSL CRS — used as fallback when raster unreachable
 
 
 def raster_configured() -> bool:
@@ -49,9 +51,19 @@ def _vsi_path(url: str) -> str:
 
 @lru_cache(maxsize=1)
 def _raster_crs() -> str:
-    """The raster's native CRS (GHS-POP global is Mollweide, ESRI:54009)."""
+    """The raster's native CRS read from the COG header."""
     with rasterio.open(_vsi_path(GHSL_RASTER_URL)) as ds:
         return ds.crs.to_string()
+
+
+def _ea_crs() -> str:
+    """Equal-area CRS for buffering / area calculation."""
+    if raster_configured():
+        try:
+            return _raster_crs()
+        except Exception:
+            pass
+    return MOLLWEIDE
 
 
 def estimate_population(features: list[dict]) -> dict:
@@ -86,7 +98,7 @@ def estimate_population(features: list[dict]) -> dict:
     gdf = gpd.GeoDataFrame({"_i": range(len(geoms))}, geometry=geoms, crs=WGS84)
 
     # Reproject into the raster's equal-area CRS, then buffer (metres) where asked.
-    gdf = gdf.to_crs(_raster_crs())
+    gdf = gdf.to_crs(_ea_crs())
     for i, m in enumerate(meta):
         bkm = m.get("buffer_km")
         if bkm:
@@ -150,3 +162,64 @@ def parse_shapefile(zip_bytes: bytes) -> dict:
         "geometry_type": geometry_type,
         "feature_count": int(len(gdf)),
     }
+
+
+def export_shapefile(features: list[dict], results: list[dict]) -> bytes:
+    """
+    Build a GeoDataFrame from features (applying buffers where buffer_km is set),
+    append population results, and return a zipped shapefile as bytes.
+    Works even when the raster is not configured (population columns will be null).
+    """
+    if not features:
+        raise ValueError("No features to export")
+
+    results_by_id = {r["id"]: r for r in results}
+
+    geoms, rows = [], []
+    for f in features:
+        geom = f.get("geometry")
+        if not geom:
+            continue
+        geoms.append(shape(geom))
+        rows.append({
+            "name":       f.get("name") or "Area",
+            "buffer_km":  f.get("buffer_km"),
+        })
+
+    gdf = gpd.GeoDataFrame(rows, geometry=geoms, crs=WGS84)
+
+    # Buffer points into polygons (circles + point shapefiles) in equal-area CRS
+    ea = _ea_crs()
+    gdf_ea = gdf.to_crs(ea)
+    for i, f in enumerate(features[:len(geoms)]):
+        bkm = f.get("buffer_km")
+        if bkm:
+            gdf_ea.at[i, "geometry"] = gdf_ea.geometry.iloc[i].buffer(float(bkm) * 1000.0)
+
+    # Area in equal-area CRS, then bring back to WGS84 for the exported file
+    gdf_ea["area_km2"] = (gdf_ea.geometry.area / 1_000_000.0).round(3)
+    gdf = gdf_ea.to_crs(WGS84)
+
+    # Append population results (null where estimate hasn't been run)
+    feat_ids = [f.get("id") for f in features[:len(geoms)]]
+    gdf["population"] = [
+        results_by_id[fid]["population"] if fid in results_by_id else None
+        for fid in feat_ids
+    ]
+    # density column (people / km²) — null if either value missing
+    gdf["density"] = [
+        round(row["population"] / row["area_km2"])
+        if row["population"] is not None and row["area_km2"] > 0 else None
+        for _, row in gdf.iterrows()
+    ]
+
+    # Write to in-memory zip
+    with tempfile.TemporaryDirectory() as tmp:
+        shp_path = os.path.join(tmp, "population_estimate.shp")
+        gdf.to_file(shp_path)
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for fname in os.listdir(tmp):
+                zf.write(os.path.join(tmp, fname), fname)
+        return buf.getvalue()
