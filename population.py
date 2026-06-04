@@ -156,25 +156,63 @@ def estimate_population(features: list[dict]) -> dict:
     return {"results": results, "total": round(total)}
 
 
+MAX_UPLOAD_FEATURES = 2_000
+MAX_UPLOAD_BYTES    = 20 * 1024 * 1024   # 20 MB zip
+
+
 def parse_shapefile(zip_bytes: bytes) -> dict:
     """
     Parse an uploaded zipped shapefile (or zipped GeoJSON/GeoPackage).
     Returns { "geojson": <FeatureCollection>, "geometry_type": "point"|"polygon" }
     with geometries reprojected to WGS84 for display/drawing.
     """
+    if len(zip_bytes) > MAX_UPLOAD_BYTES:
+        raise ValueError(
+            f"Upload is {len(zip_bytes) // (1024*1024)} MB — the limit is "
+            f"{MAX_UPLOAD_BYTES // (1024*1024)} MB. Please clip your data to a "
+            "smaller area or reduce the number of features."
+        )
+
     with tempfile.TemporaryDirectory() as tmp:
         zpath = os.path.join(tmp, "upload.zip")
         with open(zpath, "wb") as fh:
             fh.write(zip_bytes)
 
-        # Find the first vector layer inside the archive
+        # Find the first vector layer inside the archive (handles nested subdirs)
         with zipfile.ZipFile(zpath) as zf:
             names = zf.namelist()
-        inner = next((n for n in names if n.lower().endswith((".shp", ".geojson", ".json", ".gpkg"))), None)
+
+        # Skip Mac OS metadata entries (__MACOSX/…)
+        inner = next(
+            (n for n in names
+             if not n.startswith("__MACOSX")
+             and n.lower().endswith((".shp", ".geojson", ".json", ".gpkg"))),
+            None,
+        )
         if not inner:
             raise ValueError("No .shp, .geojson or .gpkg found inside the archive")
 
+        # Quick feature-count check via SHX before loading geometry
+        shx_name = inner[:-4] + ".shx" if inner.lower().endswith(".shp") else None
+        if shx_name and shx_name in names:
+            with zipfile.ZipFile(zpath) as zf:
+                with zf.open(shx_name) as shx:
+                    shx_bytes = shx.read()
+            shx_size   = len(shx_bytes)
+            num_feats  = (shx_size - 100) // 8 if shx_size >= 100 else 0
+            if num_feats > MAX_UPLOAD_FEATURES:
+                raise ValueError(
+                    f"File contains {num_feats:,} features — the limit is "
+                    f"{MAX_UPLOAD_FEATURES:,}. Please upload a smaller subset."
+                )
+
         gdf = gpd.read_file(f"/vsizip/{zpath}/{inner}")
+
+    if len(gdf) > MAX_UPLOAD_FEATURES:
+        raise ValueError(
+            f"File contains {len(gdf):,} features — the limit is "
+            f"{MAX_UPLOAD_FEATURES:,}. Please upload a smaller subset."
+        )
 
     if gdf.crs is None:
         gdf = gdf.set_crs(WGS84)        # assume lon/lat if the .prj is missing
