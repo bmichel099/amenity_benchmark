@@ -66,6 +66,34 @@ def _ea_crs() -> str:
     return MOLLWEIDE
 
 
+def _extract_sums(ds, gdf: gpd.GeoDataFrame) -> list[float]:
+    """
+    Run exactextract zonal sum over gdf rows.
+    Tries the whole batch first; if it fails (e.g. "Never get here" internal
+    assert on a bad geometry), falls back to per-row extraction, zeroing out
+    individual failures so the rest of the batch still succeeds.
+    """
+    def _parse(df) -> list[float]:
+        sum_col = next((c for c in df.columns if str(c).endswith("sum")), None)
+        if sum_col is None:
+            raise RuntimeError(f"exactextract returned no sum column: {list(df.columns)}")
+        return [max(0.0, float(v or 0.0)) for v in df[sum_col]]
+
+    try:
+        return _parse(exact_extract(ds, gdf, ["sum"], output="pandas"))
+    except Exception:
+        pass  # batch failed — try one row at a time
+
+    sums = []
+    for idx in range(len(gdf)):
+        try:
+            row_df = exact_extract(ds, gdf.iloc[[idx]], ["sum"], output="pandas")
+            sums.append(_parse(row_df)[0])
+        except Exception:
+            sums.append(0.0)
+    return sums
+
+
 def estimate_population(features: list[dict]) -> dict:
     """
     features: list of GeoJSON-ish dicts, each:
@@ -104,21 +132,19 @@ def estimate_population(features: list[dict]) -> dict:
         if bkm:
             gdf.loc[gdf["_i"] == i, "geometry"] = gdf.loc[gdf["_i"] == i, "geometry"].buffer(float(bkm) * 1000.0)
 
+    # Repair any invalid geometries (self-intersections etc.) that can trigger
+    # exactextract's internal assertions on large/diverse polygon sets.
+    gdf["geometry"] = gdf.geometry.buffer(0)
+
     # Area (km²) in the equal-area CRS
     areas_km2 = (gdf.geometry.area / 1_000_000.0).tolist()
 
     with rasterio.open(_vsi_path(GHSL_RASTER_URL)) as ds:
-        df = exact_extract(ds, gdf, ["sum"], output="pandas")
-
-    # Column is usually "sum" but some versions prefix the band ("band_1_sum")
-    sum_col = next((c for c in df.columns if str(c).endswith("sum")), None)
-    if sum_col is None:
-        raise RuntimeError(f"exactextract returned no sum column (got {list(df.columns)})")
-    sums = df[sum_col].tolist()
+        sums = _extract_sums(ds, gdf)
 
     results, total = [], 0.0
     for m, s, a in zip(meta, sums, areas_km2):
-        pop = max(0.0, float(s or 0.0))
+        pop = s
         total += pop
         results.append({
             "id": m["id"],
