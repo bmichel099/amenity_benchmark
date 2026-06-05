@@ -121,6 +121,15 @@ function bindPopEvents() {
   $('pop-download-csv-btn').addEventListener('click',     popDownloadCSV);
   $('pop-download-shp-btn').addEventListener('click',     popDownloadSHP);
 
+  // Right-click rename for population shapes (polygons + circles)
+  $('pop-ctx-rename-btn').addEventListener('click', () => {
+    if (!_popCtxTarget) return;
+    const { feat } = _popCtxTarget;
+    $('pop-ctx-menu').style.display = 'none';
+    _popCtxTarget = null;
+    openRenameModal(feat.name, newName => renamePopFeature(feat, newName));
+  });
+
   // Right-click edit menu for population polygons
   $('pop-ctx-edit-btn').addEventListener('click', () => {
     if (!_popCtxTarget) return;
@@ -363,10 +372,8 @@ function addPopFeature({ type, layer, geometry, buffer_km, name }) {
     });
   }
 
-  // Polygons get right-click vertex editing
-  if (type === 'polygon') {
-    bindPopCtxMenu(layer, feat);
-  }
+  // Right-click menu: polygons get vertex editing + rename; circles get rename
+  bindPopCtxMenu(layer, feat);
 
   popState.features.push(feat);
   addPopChip(feat);
@@ -374,13 +381,21 @@ function addPopFeature({ type, layer, geometry, buffer_km, name }) {
   if (typeof updateCount === 'function') updateCount();
 }
 
-// Bind right-click "Edit vertices" on a polygon layer (handles L.Polygon and L.GeoJSON)
+// Bind the right-click menu on a shape (handles L.Polygon, L.GeoJSON, L.Circle).
+// Polygons offer "Edit vertices" + "Rename"; circles offer "Rename" only
+// (their radius is always drag-editable, so vertex editing doesn't apply).
 function bindPopCtxMenu(layer, feat) {
   const attach = (sub) => {
     sub.on('contextmenu', e => {
       L.DomEvent.stop(e);
       _popCtxTarget = { subLayer: sub, feat };
-      $('pop-ctx-edit-btn').textContent = sub.editor ? '✓ Done editing' : '✏ Edit vertices';
+      const editBtn = $('pop-ctx-edit-btn');
+      if (feat.type === 'circle') {
+        editBtn.style.display = 'none';
+      } else {
+        editBtn.style.display = '';
+        editBtn.textContent = sub.editor ? '✓ Done editing' : '✏ Edit vertices';
+      }
       const menu = $('pop-ctx-menu');
       menu.style.left = e.originalEvent.clientX + 'px';
       menu.style.top  = e.originalEvent.clientY + 'px';
@@ -389,6 +404,25 @@ function bindPopCtxMenu(layer, feat) {
   };
   if (layer.eachLayer) layer.eachLayer(attach);
   else attach(layer);
+}
+
+// Rename a population feature — updates the chip, the map label tooltip and state.
+function renamePopFeature(feat, newName) {
+  feat.name = newName;
+  const chip = document.querySelector(`#pop-bar .location-chip[data-id="${feat._id}"]`);
+  if (chip) chip.querySelector('.chip-name').textContent = newName;
+  if (feat.layer) {
+    feat.layer.unbindTooltip();
+    feat.layer.bindTooltip(newName, { permanent: true, direction: 'center', className: 'polygon-label' });
+  }
+  // Re-render the results panel so the renamed feature shows its new label
+  if (feat.population != null) {
+    const results = popState.features
+      .filter(f => f.population != null)
+      .map(f => ({ id: f._id, name: f.name, population: f.population, area_km2: f.area_km2 }));
+    const total = results.reduce((s, r) => s + r.population, 0);
+    renderPopResults({ results, total });
+  }
 }
 
 function addPopChip(feat) {

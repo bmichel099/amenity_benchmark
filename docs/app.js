@@ -88,6 +88,39 @@ function hideThinking() {
   $('thinking-modal').style.display  = 'none';
 }
 
+// Shared rename modal — used by both tools. Calls onConfirm(newName) when the
+// user saves a non-empty name; does nothing on cancel.
+let _renameOnConfirm = null;
+function openRenameModal(currentName, onConfirm) {
+  _renameOnConfirm = onConfirm;
+  const input = $('rename-input');
+  input.value = currentName || '';
+  $('rename-modal').style.display = 'flex';
+  setTimeout(() => { input.focus(); input.select(); }, 50);
+}
+window.addEventListener('DOMContentLoaded', () => {
+  const confirm = () => {
+    const name = $('rename-input').value.trim();
+    $('rename-modal').style.display = 'none';
+    const cb = _renameOnConfirm;
+    _renameOnConfirm = null;
+    if (cb && name) cb(name);
+  };
+  const cancel = () => {
+    $('rename-modal').style.display = 'none';
+    _renameOnConfirm = null;
+  };
+  $('rename-confirm').addEventListener('click', confirm);
+  $('rename-cancel').addEventListener('click', cancel);
+  $('rename-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter')  confirm();
+    if (e.key === 'Escape') cancel();
+  });
+  $('rename-modal').addEventListener('click', e => {
+    if (e.target === $('rename-modal')) cancel();
+  });
+});
+
 function setGroups(groups) {
   state.groups = groups;
   state.amenityToGroup = {};
@@ -168,6 +201,16 @@ function bindEvents() {
   $('draw-label-input').addEventListener('keydown', e => {
     if (e.key === 'Enter')  $('draw-label-confirm').click();
     if (e.key === 'Escape') $('draw-label-cancel').click();
+  });
+
+  $('ctx-rename-btn').addEventListener('click', () => {
+    if (!_ctxTarget) return;
+    const { id } = _ctxTarget;
+    $('map-ctx-menu').style.display = 'none';
+    _ctxTarget = null;
+    const loc = state.locations.find(l => l._id === id);
+    if (!loc) return;
+    openRenameModal(loc.name, newName => renameLocation(id, newName));
   });
 
   $('ctx-edit-btn').addEventListener('click', () => {
@@ -511,6 +554,25 @@ function updateChip(id, status, displayName) {
 
   const entry = state.locations.find(l => l._id === id);
   if (entry) entry.status = status;
+}
+
+function renameLocation(id, newName) {
+  const loc = state.locations.find(l => l._id === id);
+  if (!loc) return;
+  loc.name = newName;
+  loc.display_name = newName;
+
+  // Update the chip label
+  const chip = document.querySelector(`.location-chip[data-id="${id}"]`);
+  if (chip) chip.querySelector('.chip-name').textContent = newName;
+
+  // Update the polygon's permanent tooltip label
+  const layer = state.boundaryLayers[id];
+  if (layer) {
+    layer.eachLayer(sub => sub.unbindTooltip && sub.unbindTooltip());
+    layer.unbindTooltip();
+    layer.bindTooltip(newName, { permanent: true, direction: 'center', className: 'polygon-label', sticky: false });
+  }
 }
 
 function toggleLocation(id) {
