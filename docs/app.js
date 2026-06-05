@@ -153,12 +153,19 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-// Shared world bounds used by both maps on first load — stays within Mercator's
-// valid range so no grey borders appear on any screen size.
-const WORLD_BOUNDS = [[-72, -175], [72, 175]];
+// Fit the world so it spans the viewport width exactly once — the full 360° of
+// longitude fills the map's width with no horizontal wrapping and no grey bands
+// at any screen size. Both tools call this so they open at an identical view.
+function fitWorldView(map) {
+  map.invalidateSize();
+  const w = map.getSize().x;
+  if (!w) { setTimeout(() => fitWorldView(map), 60); return; }
+  const zoom = Math.log2(w / 256);   // zoom where 256·2^z (world px) == container px
+  map.setView([25, 0], zoom, { animate: false });
+}
 
 function initMap() {
-  state.map = L.map('map', { worldCopyJump: true, minZoom: 1, editable: true });
+  state.map = L.map('map', { worldCopyJump: true, minZoom: 1, zoomSnap: 0, editable: true });
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
     subdomains: 'abcd', maxZoom: 19,
@@ -166,10 +173,7 @@ function initMap() {
 
   // Wait one frame so the flex container has its final pixel dimensions before
   // fitting — prevents the grey-at-top bug on large / HiDPI displays.
-  requestAnimationFrame(() => {
-    state.map.invalidateSize();
-    state.map.fitBounds(WORLD_BOUNDS, { padding: [0, 0] });
-  });
+  requestAnimationFrame(() => fitWorldView(state.map));
 
   window.addEventListener('resize', () => {
     state.map.invalidateSize();

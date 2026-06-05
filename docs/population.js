@@ -64,11 +64,12 @@ function switchTab(tab) {
     const firstInit = !popState.inited;
     initPopMap();
     // Two passes: once the container is laid out, and again after the transition.
-    // On first init, fit to the same world bounds as the amenity map so both
+    // On first init, fit to the same world view as the amenity map so both
     // tools open at identical scale and position on every screen size.
     const fitIfFirst = () => {
-      popState.map && popState.map.invalidateSize();
-      if (firstInit) popState.map.fitBounds(WORLD_BOUNDS, { padding: [0, 0] });
+      if (!popState.map) return;
+      if (firstInit) fitWorldView(popState.map);
+      else popState.map.invalidateSize();
     };
     setTimeout(fitIfFirst, 120);
     setTimeout(fitIfFirst, 400);
@@ -80,7 +81,7 @@ function initPopMap() {
   popState.inited = true;
 
   popState.map = L.map('pop-map', {
-    worldCopyJump: true, minZoom: 1, editable: true,
+    worldCopyJump: true, minZoom: 1, zoomSnap: 0, editable: true,
   });
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution:
