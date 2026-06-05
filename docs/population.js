@@ -61,10 +61,17 @@ function switchTab(tab) {
   if (amenity) {
     setTimeout(() => state.map && state.map.invalidateSize(), 120);
   } else {
+    const firstInit = !popState.inited;
     initPopMap();
-    // Two passes: once the container is laid out, and again after the transition
-    setTimeout(() => popState.map && popState.map.invalidateSize(), 120);
-    setTimeout(() => popState.map && popState.map.invalidateSize(), 400);
+    // Two passes: once the container is laid out, and again after the transition.
+    // On first init, fit to the same world bounds as the amenity map so both
+    // tools open at identical scale and position on every screen size.
+    const fitIfFirst = () => {
+      popState.map && popState.map.invalidateSize();
+      if (firstInit) popState.map.fitBounds(WORLD_BOUNDS, { padding: [0, 0] });
+    };
+    setTimeout(fitIfFirst, 120);
+    setTimeout(fitIfFirst, 400);
   }
 }
 
@@ -73,7 +80,7 @@ function initPopMap() {
   popState.inited = true;
 
   popState.map = L.map('pop-map', {
-    center: [20, 0], zoom: 2, worldCopyJump: true, minZoom: 1, editable: true,
+    worldCopyJump: true, minZoom: 1, editable: true,
   });
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution:

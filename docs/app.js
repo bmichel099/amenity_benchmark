@@ -153,12 +153,23 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 });
 
+// Shared world bounds used by both maps on first load — stays within Mercator's
+// valid range so no grey borders appear on any screen size.
+const WORLD_BOUNDS = [[-72, -175], [72, 175]];
+
 function initMap() {
-  state.map = L.map('map', { center:[25,10], zoom:2, worldCopyJump:true, minZoom:1, editable: true });
+  state.map = L.map('map', { worldCopyJump: true, minZoom: 1, editable: true });
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
     subdomains: 'abcd', maxZoom: 19,
   }).addTo(state.map);
+
+  // Wait one frame so the flex container has its final pixel dimensions before
+  // fitting — prevents the grey-at-top bug on large / HiDPI displays.
+  requestAnimationFrame(() => {
+    state.map.invalidateSize();
+    state.map.fitBounds(WORLD_BOUNDS, { padding: [0, 0] });
+  });
 
   window.addEventListener('resize', () => {
     state.map.invalidateSize();
