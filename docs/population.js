@@ -144,6 +144,27 @@ function bindPopEvents() {
     if (!e.target.closest('#pop-ctx-menu')) $('pop-ctx-menu').style.display = 'none';
   });
 
+  // Name modal (draw polygon / circle)
+  $('pop-name-confirm').addEventListener('click', () => {
+    const next = popState.features.length + 1;
+    const name = $('pop-name-input').value.trim() || `Area ${next}`;
+    $('pop-name-modal').style.display = 'none';
+    const cb = _popNameOnConfirm;
+    _popNameOnConfirm = _popNameOnCancel = null;
+    if (cb) cb(name);
+  });
+  $('pop-name-cancel').addEventListener('click', () => {
+    $('pop-name-modal').style.display = 'none';
+    const cb = _popNameOnCancel;
+    _popNameOnConfirm = _popNameOnCancel = null;
+    if (cb) cb();
+    setStatus('idle', 'Draw cancelled.');
+  });
+  $('pop-name-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter')  $('pop-name-confirm').click();
+    if (e.key === 'Escape') $('pop-name-cancel').click();
+  });
+
   // Buffer-distance modal
   $('buffer-confirm').addEventListener('click', () => {
     const km = parseFloat($('buffer-input').value);
@@ -167,7 +188,9 @@ function popDrawPolygon() {
   $('pop-cancel-btn').style.display = '';
   setStatus('loading', 'Click map to place vertices — double-click to finish. Right-click a polygon to edit its vertices.');
   popState.map.once('editable:drawing:commit', e => {
-    addPopFeature({ type: 'polygon', layer: e.layer, geometry: e.layer.toGeoJSON().geometry, buffer_km: null });
+    promptPopName('Area', name =>
+      addPopFeature({ type: 'polygon', layer: e.layer, geometry: e.layer.toGeoJSON().geometry, buffer_km: null, name }),
+      () => popState.map.removeLayer(e.layer));
     finishDraw();
   });
   popState.map.editTools.startPolygon();
@@ -182,15 +205,32 @@ function popDrawCircle() {
     const layer = e.layer;
     const c  = layer.getLatLng();
     const km = layer.getRadius() / 1000;
-    addPopFeature({
-      type: 'circle', layer,
-      geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
-      buffer_km: km,
-    });
     hideRadius();
+    promptPopName('Buffer', name =>
+      addPopFeature({
+        type: 'circle', layer,
+        geometry: { type: 'Point', coordinates: [c.lng, c.lat] },
+        buffer_km: km, name,
+      }),
+      () => popState.map.removeLayer(layer));
     finishDraw();
   });
   popState.map.editTools.startCircle();
+}
+
+// Ask the user to name a freshly-drawn area, pre-filling the next default
+// nomenclature ("Area 1", "Buffer 1", …). onConfirm(name) adds the feature;
+// onCancel() discards the temporary drawing layer.
+let _popNameOnConfirm = null;
+let _popNameOnCancel  = null;
+function promptPopName(prefix, onConfirm, onCancel) {
+  _popNameOnConfirm = onConfirm;
+  _popNameOnCancel  = onCancel;
+  const next  = popState.features.length + 1;
+  const input = $('pop-name-input');
+  input.value = `${prefix} ${next}`;
+  $('pop-name-modal').style.display = 'flex';
+  setTimeout(() => { input.focus(); input.select(); }, 50);
 }
 
 function finishDraw() {
@@ -484,7 +524,7 @@ function renderPopResults(data) {
       <span class="legend-swatch" style="background:${color}; margin-top:5px"></span>
       <div style="flex:1; min-width:0">
         <div class="pop-row-name">${r.name}</div>
-        <div class="pop-row-stat">${r.area_km2} km²${feat?.buffer_km ? ` · ${feat.buffer_km.toFixed(2)} km buffer` : ''}  ·  ~${nf(density)} / km²</div>
+        <div class="pop-row-stat">${nf(Math.round(r.area_km2))} km²${feat?.buffer_km ? ` · ${feat.buffer_km.toFixed(2)} km buffer` : ''}  ·  ~${nf(density)} people / km²</div>
       </div>
       <div class="pop-row-value">${nf(r.population)}</div>`;
     c.appendChild(row);

@@ -13,7 +13,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="style.css?v=7" />
+  <link rel="stylesheet" href="style.css?v=8" />
 </head>
 
 <body>
@@ -266,6 +266,20 @@
     </div>
   </div>
 
+  <!-- Name modal (population draw polygon / circle) -->
+  <div id="pop-name-modal" class="modal-overlay" style="display:none">
+    <div class="modal-glass">
+      <div class="modal-overline">New area</div>
+      <div class="modal-title">Name this area</div>
+      <input id="pop-name-input" class="modal-input" type="text"
+             placeholder="e.g. Area 1" autocomplete="off" />
+      <div class="modal-actions">
+        <button id="pop-name-cancel"  class="btn btn-secondary">Cancel</button>
+        <button id="pop-name-confirm" class="btn btn-primary">Add area</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Info modal: Amenity Ecosystem -->
   <div id="info-amenity-modal" class="modal-overlay" style="display:none">
     <div class="modal-glass modal-wide">
@@ -343,7 +357,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=7"></script>
-  <script src="population.js?v=7"></script>
+  <script src="app.js?v=8"></script>
+  <script src="population.js?v=8"></script>
 </body>
 </html>
