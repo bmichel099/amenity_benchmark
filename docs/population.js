@@ -52,10 +52,11 @@ function switchTab(tab) {
   _activeTab = tab;
   $('tab-amenity').classList.toggle('active', amenity);
   $('tab-population').classList.toggle('active', !amenity);
-  $('amenity-toolbar').style.display    = amenity ? '' : 'none';
-  $('population-toolbar').style.display = amenity ? 'none' : '';
-  $('view-amenity').style.display       = amenity ? '' : 'none';
-  $('view-population').style.display    = amenity ? 'none' : '';
+  $('amenity-toolbar').style.display    = amenity ? 'flex' : 'none';
+  $('population-toolbar').style.display = amenity ? 'none' : 'flex';
+  $('view-amenity').style.display       = amenity ? 'flex' : 'none';
+  $('view-population').style.display    = amenity ? 'none' : 'flex';
+  if (typeof updateCount === 'function') updateCount();
 
   if (amenity) {
     setTimeout(() => state.map && state.map.invalidateSize(), 120);
@@ -330,6 +331,7 @@ function addPopFeature({ type, layer, geometry, buffer_km, name }) {
   popState.features.push(feat);
   addPopChip(feat);
   showPopButtons();
+  if (typeof updateCount === 'function') updateCount();
 }
 
 // Bind right-click "Edit vertices" on a polygon layer (handles L.Polygon and L.GeoJSON)
@@ -381,6 +383,7 @@ function removePopFeature(id) {
     $('pop-bar').classList.remove('visible');
     showPopButtons();
   }
+  if (typeof updateCount === 'function') updateCount();
 }
 
 function showPopButtons() {
@@ -408,6 +411,7 @@ function popReset() {
   $('pop-loading').style.display = 'none';
   $('pop-empty').style.display   = '';
   showPopButtons();
+  if (typeof updateCount === 'function') updateCount();
   setStatus('idle', 'Cleared.');
 }
 

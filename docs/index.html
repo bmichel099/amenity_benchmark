@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Amenity Benchmark</title>
+  <title>Amenity Benchmark — Foster + Partners</title>
 
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -11,17 +11,19 @@
   <script src="https://cdn.jsdelivr.net/npm/d3@7/dist/d3.min.js"></script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
 
-  <link rel="stylesheet" href="style.css?v=5" />
+  <link rel="stylesheet" href="style.css?v=6" />
 </head>
 
 <body>
 
-  <!-- ── Header ── -->
+  <!-- ════ HEADER ════ -->
   <header>
     <div class="app-brand">
-      <span class="app-title">Amenity Benchmark</span>
+      <span class="hd-brand">Foster <span class="plus">+</span> Partners</span>
+      <span class="hd-sep"></span>
+      <span class="hd-sub">Amenity Benchmark</span>
     </div>
 
     <nav class="tab-bar">
@@ -29,121 +31,133 @@
       <button id="tab-population" class="tab-btn"        title="Estimate population inside polygons (GHSL)">Population&nbsp;Estimate</button>
     </nav>
 
-    <!-- Amenity toolbar -->
-    <div class="search-wrap" id="amenity-toolbar">
-      <div class="mode-toggle">
-        <button id="mode-ai"   class="mode-btn active" title="AI-suggested benchmark locations">AI&nbsp;Search</button>
-        <button id="mode-osm"  class="mode-btn"        title="Enter OSM IDs directly">OSM&nbsp;IDs</button>
-        <button id="mode-draw" class="mode-btn"        title="Draw a custom polygon on the map">Draw</button>
-      </div>
-
-      <div class="search-row">
-        <input id="search-input"
-               class="search-input"
-               type="text"
-               placeholder="e.g. boutique design district, mountain ski resort, financial CBD…"
-               autocomplete="off" />
-
-        <!-- AI mode controls -->
-        <select id="num-locations" class="num-select" title="Number of benchmark locations">
-          <option value="1">1</option>
-          <option value="5">5</option>
-          <option value="10">10</option>
-          <option value="15" selected>15</option>
-          <option value="20">20</option>
-          <option value="25">25</option>
-        </select>
-        <button id="search-btn" class="btn btn-primary">Search</button>
-
-        <!-- OSM mode controls (hidden in AI mode) -->
-        <button id="add-relations-btn" class="btn btn-secondary" style="display:none" title="Add OSM relation IDs">+ Relations</button>
-        <button id="add-ways-btn"      class="btn btn-secondary" style="display:none" title="Add OSM way IDs">+ Ways</button>
-
-        <!-- Draw mode controls (hidden in other modes) -->
-        <button id="draw-polygon-btn" class="btn btn-secondary" style="display:none" title="Start drawing a polygon on the map">✎ Draw polygon</button>
-        <button id="draw-cancel-btn"  class="btn btn-ghost"     style="display:none" title="Cancel current drawing">✕ Cancel</button>
-
-        <!-- Always visible when locations exist -->
-        <button id="analyze-btn" class="btn btn-accent"   style="display:none">↻ Analyse</button>
-        <button id="reset-btn"   class="btn btn-ghost"    style="display:none" title="Clear all locations">✕ Reset</button>
-      </div>
-
-      <p id="search-hint" class="search-hint">
-        AI mode: describe any location type — Gemini suggests benchmark examples worldwide and defines context-specific amenity groups.
-      </p>
+    <div class="hd-right">
+      <span id="count-badge"></span>
+      <button id="help-btn" class="help-btn" title="About this tool" aria-label="About this tool">?</button>
     </div>
-
-    <!-- Population toolbar -->
-    <div class="search-wrap" id="population-toolbar" style="display:none">
-      <div class="search-row">
-        <button id="pop-draw-polygon-btn" class="btn btn-secondary" title="Draw a polygon on the map">✎ Draw polygon</button>
-        <button id="pop-draw-circle-btn"  class="btn btn-secondary" title="Drag a circular buffer from a point">◯ Circle buffer</button>
-        <button id="pop-upload-btn"       class="btn btn-secondary" title="Upload a zipped shapefile (.zip)">⬆ Upload shapefile</button>
-        <input  id="pop-file-input" type="file" accept=".zip,.geojson,.json" style="display:none" />
-        <button id="pop-cancel-btn"   class="btn btn-ghost"    style="display:none" title="Cancel current drawing">✕ Cancel</button>
-        <button id="pop-estimate-btn" class="btn btn-primary"  style="display:none">Σ Estimate population</button>
-        <button id="pop-reset-btn"    class="btn btn-ghost"    style="display:none" title="Clear all areas">✕ Reset</button>
-      </div>
-      <p id="pop-hint" class="search-hint">
-        Draw polygons, drag circle buffers, or upload a zipped shapefile (point or polygon) — then click Estimate to sum GHSL population.
-      </p>
-    </div>
-
-    <button id="help-btn" class="help-btn" title="About this tool" aria-label="About this tool">?</button>
   </header>
+
+  <!-- ════ TOOLBAR: AMENITY ════ -->
+  <div class="toolbar" id="amenity-toolbar">
+    <div class="mode-toggle">
+      <button id="mode-ai"   class="mode-btn active" title="AI-suggested benchmark locations">AI&nbsp;Search</button>
+      <button id="mode-osm"  class="mode-btn"        title="Enter OSM IDs directly">OSM&nbsp;IDs</button>
+      <button id="mode-draw" class="mode-btn"        title="Draw a custom polygon on the map">Draw</button>
+    </div>
+
+    <div class="search-pill" id="search-pill">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+      <input id="search-input" class="search-input" type="text" autocomplete="off"
+             placeholder="e.g. boutique design district, mountain ski resort, financial CBD…" />
+      <span class="search-tag" id="search-tag">AI</span>
+    </div>
+
+    <!-- AI mode controls -->
+    <div id="ai-controls">
+      <span class="num-label">Benchmarks</span>
+      <select id="num-locations" class="num-select" title="Number of benchmark locations">
+        <option value="1">1</option>
+        <option value="5">5</option>
+        <option value="10">10</option>
+        <option value="15" selected>15</option>
+        <option value="20">20</option>
+        <option value="25">25</option>
+      </select>
+      <button id="search-btn" class="btn btn-primary">Search</button>
+    </div>
+
+    <!-- OSM mode controls -->
+    <div id="osm-controls" style="display:none">
+      <button id="add-relations-btn" class="btn btn-secondary" title="Add OSM relation IDs">+ Relations</button>
+      <button id="add-ways-btn"      class="btn btn-secondary" title="Add OSM way IDs">+ Ways</button>
+    </div>
+
+    <!-- Draw mode controls -->
+    <div id="draw-controls" style="display:none">
+      <button id="draw-polygon-btn" class="btn btn-secondary" title="Start drawing a polygon on the map">✎ Draw polygon</button>
+      <button id="draw-cancel-btn"  class="btn btn-ghost" style="display:none" title="Cancel current drawing">✕ Cancel</button>
+    </div>
+
+    <span class="bar-sep"></span>
+    <button id="analyze-btn" class="btn btn-accent" style="display:none">↻ Analyse</button>
+    <button id="reset-btn"   class="btn btn-ghost"  style="display:none" title="Clear all locations">✕ Reset</button>
+
+    <span class="bar-spacer"></span>
+    <span id="search-hint" class="search-hint">Gemini suggests benchmark examples worldwide and defines context-specific amenity groups.</span>
+  </div>
+
+  <!-- ════ TOOLBAR: POPULATION ════ -->
+  <div class="toolbar" id="population-toolbar" style="display:none">
+    <button id="pop-draw-polygon-btn" class="btn btn-secondary" title="Draw a polygon on the map">✎ Draw polygon</button>
+    <button id="pop-draw-circle-btn"  class="btn btn-secondary" title="Drag a circular buffer from a point">◯ Circle buffer</button>
+    <button id="pop-upload-btn"       class="btn btn-secondary" title="Upload a zipped shapefile (.zip)">⬆ Upload shapefile</button>
+    <input  id="pop-file-input" type="file" accept=".zip,.geojson,.json" style="display:none" />
+    <button id="pop-cancel-btn"   class="btn btn-ghost"   style="display:none" title="Cancel current drawing">✕ Cancel</button>
+    <span class="bar-sep"></span>
+    <button id="pop-estimate-btn" class="btn btn-primary" style="display:none">Σ Estimate population</button>
+    <button id="pop-reset-btn"    class="btn btn-ghost"   style="display:none" title="Clear all areas">✕ Reset</button>
+    <span class="bar-spacer"></span>
+    <span id="pop-hint" class="search-hint">Draw polygons, drag circle buffers, or upload a zipped shapefile — then Estimate to sum GHSL population.</span>
+  </div>
 
   <!-- ════════════════ VIEW: AMENITY ECOSYSTEM ════════════════ -->
   <div id="view-amenity" class="view">
 
-  <!-- ── Location chips bar ── -->
-  <div id="locations-bar" class="locations-bar"></div>
+    <div id="locations-bar" class="locations-bar"></div>
 
-  <!-- ── Main split ── -->
-  <main class="main">
-
-    <!-- Left: map -->
-    <section class="map-panel">
-      <div id="map"></div>
-      <div class="map-overlay-bottom">
-        <div id="map-stats" class="map-stats" style="display:none"></div>
-      </div>
-    </section>
-
-    <!-- Right: diagram -->
-    <section class="diagram-panel">
-
-      <div id="diagram-empty" class="empty-state">
-        <div class="empty-icon">◎</div>
-        <div class="empty-title">No data yet</div>
-        <div class="empty-text">
-          Describe a location type and click <strong>Search</strong>.<br>
-          Once locations appear, click <strong>Analyse</strong>.
+    <main class="main">
+      <!-- Left: map -->
+      <section class="map-panel">
+        <div id="map" class="map grayscale"></div>
+        <div class="map-overlay-bottom">
+          <div id="map-stats" class="map-stats" style="display:none"></div>
         </div>
-      </div>
+        <div class="map-legend">
+          <div class="map-legend-title">On the map</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:transparent;border:1.5px solid var(--ink-3);box-shadow:none"></span>Polygon — benchmark boundary</div>
+          <div class="map-legend-row"><span class="map-legend-dot" style="background:var(--ink-3)"></span>Dot — amenity, by group colour</div>
+          <div class="map-legend-row" style="color:var(--ink-4);font-size:11px;margin-top:4px">Zoom out for the global spread</div>
+        </div>
+      </section>
 
-      <div id="diagram-loading" class="empty-state" style="display:none">
-        <div class="spinner"></div>
-        <div class="empty-title">Working…</div>
-        <div id="loading-detail" class="empty-text">Loading</div>
-      </div>
+      <!-- Right: diagram -->
+      <section class="diagram-panel">
 
-      <div id="diagram-content" style="display:none">
-        <div class="diagram-header">
-          <div class="diagram-header-text">
-            <div id="diagram-title" class="diagram-title"></div>
-            <div id="diagram-subtitle" class="diagram-subtitle"></div>
+        <div id="diagram-empty" class="empty-state">
+          <div class="empty-icon">◎</div>
+          <div class="empty-title">No ecosystem yet</div>
+          <div class="empty-text">
+            Describe a location type and press <strong>Search</strong>.<br>
+            Once locations appear, press <strong>Analyse</strong>.
           </div>
-          <button id="download-svg-btn"     class="btn-icon" title="Download chart + legend as SVG">⬇ SVG</button>
-          <button id="download-geojson-btn" class="btn-icon" title="Download amenities as GeoJSON">⬇ GeoJSON</button>
         </div>
-        <div class="bubble-container" id="bubble-container">
-          <svg id="bubble-svg"></svg>
-        </div>
-        <div class="legend-container" id="legend-container"></div>
-      </div>
 
-    </section>
-  </main>
+        <div id="diagram-loading" class="empty-state" style="display:none">
+          <div class="spinner"></div>
+          <div class="empty-title">Working</div>
+          <div id="loading-detail" class="empty-text">Loading</div>
+        </div>
+
+        <div id="diagram-content" style="display:none">
+          <div class="diagram-header">
+            <div class="diagram-header-text">
+              <div class="panel-overline">Amenity Ecosystem</div>
+              <div id="diagram-title" class="diagram-title"></div>
+              <div id="diagram-subtitle" class="diagram-subtitle"></div>
+            </div>
+            <div class="panel-dl">
+              <button id="download-svg-btn"     class="btn-icon" title="Download chart + legend as SVG">⬇ SVG</button>
+              <button id="download-geojson-btn" class="btn-icon" title="Download amenities as GeoJSON">⬇ GeoJSON</button>
+            </div>
+          </div>
+          <div class="bubble-container" id="bubble-container">
+            <svg id="bubble-svg"></svg>
+          </div>
+          <div class="legend-container" id="legend-container"></div>
+        </div>
+
+      </section>
+    </main>
   </div><!-- /view-amenity -->
 
   <!-- ════════════════ VIEW: POPULATION ESTIMATE ════════════════ -->
@@ -154,7 +168,7 @@
     <main class="main">
       <!-- Left: map -->
       <section class="map-panel">
-        <div id="pop-map"></div>
+        <div id="pop-map" class="map grayscale"></div>
         <div class="map-overlay-bottom">
           <div id="pop-stats" class="map-stats" style="display:none"></div>
         </div>
@@ -169,26 +183,30 @@
           <div class="empty-title">No areas yet</div>
           <div class="empty-text">
             <strong>Draw</strong> a polygon or circle buffer, or <strong>upload</strong> a shapefile.<br>
-            Then click <strong>Estimate population</strong>.
+            Then press <strong>Estimate population</strong>.
           </div>
         </div>
 
         <div id="pop-loading" class="empty-state" style="display:none">
           <div class="spinner"></div>
-          <div class="empty-title">Estimating…</div>
+          <div class="empty-title">Estimating</div>
           <div id="pop-loading-detail" class="empty-text">Reading GHSL raster</div>
         </div>
 
         <div id="pop-content" style="display:none">
           <div class="diagram-header">
             <div class="diagram-header-text">
-              <div class="diagram-title">Population estimate — GHSL 100m, 2025</div>
-              <div id="pop-total" class="pop-total"></div>
+              <div class="panel-overline">Population Estimate</div>
+              <div class="diagram-title">GHSL 100&nbsp;m · 2025</div>
+              <div class="diagram-subtitle">Population summed per area with exact partial-pixel coverage.</div>
             </div>
-            <button id="pop-download-geojson-btn" class="btn-icon" title="Download as GeoJSON">⬇ GeoJSON</button>
-            <button id="pop-download-csv-btn"     class="btn-icon" title="Download as CSV">⬇ CSV</button>
-            <button id="pop-download-shp-btn"     class="btn-icon" title="Download as Shapefile (ZIP)">⬇ SHP</button>
+            <div class="panel-dl">
+              <button id="pop-download-geojson-btn" class="btn-icon" title="Download as GeoJSON">⬇ GeoJSON</button>
+              <button id="pop-download-csv-btn"     class="btn-icon" title="Download as CSV">⬇ CSV</button>
+              <button id="pop-download-shp-btn"     class="btn-icon" title="Download as Shapefile (ZIP)">⬇ SHP</button>
+            </div>
           </div>
+          <div style="padding:16px 24px 4px"><div id="pop-total" class="pop-total"></div></div>
           <div id="pop-results" class="pop-results"></div>
         </div>
 
@@ -196,30 +214,35 @@
     </main>
   </div><!-- /view-population -->
 
-  <!-- ── Status bar ── -->
+  <!-- ════ STATUS BAR ════ -->
   <div class="status-bar">
     <span id="status-dot" class="status-dot"></span>
     <span id="status-msg">Ready — describe a location type to begin.</span>
+    <span class="status-spacer"></span>
+    <span class="status-meta">OpenStreetMap · Overpass · GHSL · Gemini</span>
   </div>
 
   <div id="tooltip" class="tooltip"></div>
 
+  <!-- ════ CONTEXT MENUS ════ -->
   <div id="map-ctx-menu" class="map-ctx-menu" style="display:none">
     <button id="ctx-edit-btn">✏ Edit vertices</button>
   </div>
-
   <div id="pop-ctx-menu" class="map-ctx-menu" style="display:none">
     <button id="pop-ctx-edit-btn">✏ Edit vertices</button>
   </div>
 
+  <!-- ════ MODALS ════ -->
+
   <!-- Draw label modal -->
   <div id="draw-label-modal" class="modal-overlay" style="display:none">
     <div class="modal-glass">
+      <div class="modal-overline">New area</div>
       <div class="modal-title">Name this area</div>
       <input id="draw-label-input" class="modal-input" type="text"
              placeholder="e.g. Custom District, My Polygon…" autocomplete="off" />
       <div class="modal-actions">
-        <button id="draw-label-cancel"  class="btn btn-ghost">Cancel</button>
+        <button id="draw-label-cancel"  class="btn btn-secondary">Cancel</button>
         <button id="draw-label-confirm" class="btn btn-primary">Add location</button>
       </div>
     </div>
@@ -228,15 +251,16 @@
   <!-- Buffer-distance modal (point shapefiles) -->
   <div id="buffer-modal" class="modal-overlay" style="display:none">
     <div class="modal-glass">
+      <div class="modal-overline">Point layer</div>
       <div class="modal-title">Buffer distance</div>
-      <div class="empty-text" style="margin-bottom:14px; text-align:left">
+      <div class="empty-text" style="margin-bottom:16px; text-align:left; max-width:none">
         The uploaded layer contains <strong id="buffer-count">point</strong> features.
         Enter a radius (km) to draw a circular buffer around each.
       </div>
       <input id="buffer-input" class="modal-input" type="number" min="0.1" step="0.1"
              value="1" placeholder="e.g. 1.5" autocomplete="off" />
       <div class="modal-actions">
-        <button id="buffer-cancel"  class="btn btn-ghost">Cancel</button>
+        <button id="buffer-cancel"  class="btn btn-secondary">Cancel</button>
         <button id="buffer-confirm" class="btn btn-primary">Add buffers</button>
       </div>
     </div>
@@ -245,13 +269,14 @@
   <!-- Info modal: Amenity Ecosystem -->
   <div id="info-amenity-modal" class="modal-overlay" style="display:none">
     <div class="modal-glass modal-wide">
+      <div class="modal-overline">Foster + Partners — Amenity Benchmark</div>
       <div class="modal-title">Amenity Ecosystem</div>
       <div class="info-body">
         <p>Benchmark the amenity mix of places worldwide. Describe a location type and
            Gemini suggests comparable real-world examples plus a custom set of amenity
            groups; the app pulls every shop &amp; amenity from OpenStreetMap inside each
            boundary and renders a normalised bubble chart so you can compare the
-           “ecosystem” across locations.</p>
+           ecosystem across locations.</p>
         <h4>Three ways to add locations</h4>
         <ul class="info-list">
           <li><strong>AI Search</strong> — <span>describe a place type (e.g. “boutique design district”) and pick how many benchmarks to generate.</span></li>
@@ -261,7 +286,7 @@
         <h4>Tips</h4>
         <ul class="info-list">
           <li><span>Right-click any polygon to edit its vertices.</span></li>
-          <li><span>Click <strong>Analyse</strong> to fetch amenities, then download the chart (SVG) or the raw amenities (GeoJSON).</span></li>
+          <li><span>Press <strong>Analyse</strong> to fetch amenities, then download the chart (SVG) or the raw amenities (GeoJSON).</span></li>
         </ul>
       </div>
       <div class="modal-actions">
@@ -273,6 +298,7 @@
   <!-- Info modal: Population Estimate -->
   <div id="info-population-modal" class="modal-overlay" style="display:none">
     <div class="modal-glass modal-wide">
+      <div class="modal-overline">Foster + Partners — Amenity Benchmark</div>
       <div class="modal-title">Population Estimate</div>
       <div class="info-body">
         <p>Estimate the population living inside any set of areas using the
@@ -287,7 +313,7 @@
         <h4>Tips</h4>
         <ul class="info-list">
           <li><span>Right-click a polygon to edit its vertices; drag a circle’s handle to resize.</span></li>
-          <li><span>Click <strong>Estimate population</strong>, then download results as GeoJSON, CSV, or Shapefile with the population attributes appended.</span></li>
+          <li><span>Press <strong>Estimate population</strong>, then download results as GeoJSON, CSV, or Shapefile with the population attributes appended.</span></li>
         </ul>
       </div>
       <div class="modal-actions">
@@ -299,8 +325,9 @@
   <!-- Generic error alert modal -->
   <div id="alert-modal" class="modal-overlay" style="display:none">
     <div class="modal-glass">
+      <div class="modal-overline">Something went wrong</div>
       <div class="modal-title" id="alert-modal-title">Error</div>
-      <div id="alert-modal-body" class="empty-text" style="margin-bottom:20px;text-align:left"></div>
+      <div id="alert-modal-body" class="empty-text" style="margin-bottom:20px;text-align:left;max-width:none"></div>
       <div class="modal-actions">
         <button id="alert-modal-ok" class="btn btn-primary">OK</button>
       </div>
@@ -311,12 +338,12 @@
   <div id="thinking-modal" class="modal-overlay" style="display:none">
     <div class="modal-glass thinking-glass">
       <div class="thinking-spinner"></div>
-      <div class="modal-title" style="margin-bottom:6px">Gemini is thinking…</div>
-      <div id="thinking-detail" class="empty-text"></div>
+      <div class="modal-title">Gemini is thinking…</div>
+      <div id="thinking-detail" class="empty-text" style="max-width:none"></div>
     </div>
   </div>
 
-  <script src="app.js?v=5"></script>
-  <script src="population.js?v=5"></script>
+  <script src="app.js?v=6"></script>
+  <script src="population.js?v=6"></script>
 </body>
 </html>

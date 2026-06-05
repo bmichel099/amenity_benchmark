@@ -109,6 +109,7 @@ window.addEventListener('DOMContentLoaded', () => {
   bindEvents();
   loadDefaultGroups();
   setMode('ai');
+  updateCount();
 
   // Alert modal OK
   $('alert-modal-ok').addEventListener('click', () => {
@@ -203,24 +204,38 @@ function setMode(mode) {
   $('mode-osm').classList.toggle('active',  mode === 'osm');
   $('mode-draw').classList.toggle('active', mode === 'draw');
 
-  $('search-input').style.display       = mode === 'draw' ? 'none' : '';
-  $('search-btn').style.display         = mode === 'ai'   ? '' : 'none';
-  $('num-locations').style.display      = mode === 'ai'   ? '' : 'none';
-  $('add-relations-btn').style.display  = mode === 'osm'  ? '' : 'none';
-  $('add-ways-btn').style.display       = mode === 'osm'  ? '' : 'none';
-  $('draw-polygon-btn').style.display   = mode === 'draw' ? '' : 'none';
-  $('draw-cancel-btn').style.display    = 'none';  // only appears while actively drawing
+  // Search pill is used for AI prompts + OSM IDs; hidden only in draw mode
+  $('search-pill').style.display      = mode === 'draw' ? 'none' : 'flex';
+  $('ai-controls').style.display      = mode === 'ai'   ? 'flex' : 'none';
+  $('osm-controls').style.display     = mode === 'osm'  ? 'flex' : 'none';
+  $('draw-controls').style.display    = mode === 'draw' ? 'flex' : 'none';
+  $('draw-cancel-btn').style.display  = 'none';  // only appears while actively drawing
+  $('search-tag').textContent         = mode === 'osm' ? 'OSM' : 'AI';
 
   const hints = {
     ai:   ['e.g. boutique design district, mountain ski resort, financial CBD…',
-           'AI mode: describe any location type — Gemini suggests benchmark examples + custom amenity groups.'],
+           'Gemini suggests benchmark examples worldwide and defines context-specific amenity groups.'],
     osm:  ['e.g. 62149, 5750005, 7444  (comma-separated IDs)',
-           'OSM ID mode: paste relation or way IDs from openstreetmap.org and click + Relations or + Ways.'],
+           'Paste OpenStreetMap relation or way IDs, then click + Relations or + Ways.'],
     draw: ['',
-           'Draw mode: click "Draw polygon" then click the map to place vertices. Double-click to finish, then name your area.'],
+           'Click “Draw polygon”, then click the map to place vertices. Double-click to finish, then name your area.'],
   };
   if (mode !== 'draw') $('search-input').placeholder = hints[mode][0];
   $('search-hint').textContent = hints[mode][1];
+}
+
+// Header count badge — reflects the active tool's item count
+function updateCount() {
+  const badge = $('count-badge');
+  if (!badge) return;
+  const tab = (typeof _activeTab !== 'undefined') ? _activeTab : 'amenity';
+  if (tab === 'population') {
+    const n = (typeof popState !== 'undefined') ? popState.features.length : 0;
+    badge.textContent = `${n} area${n === 1 ? '' : 's'}`;
+  } else {
+    const n = state.locations.length;
+    badge.textContent = `${n} location${n === 1 ? '' : 's'}`;
+  }
 }
 
 async function loadDefaultGroups() {
@@ -326,6 +341,7 @@ function addDrawnPolygon(layer, name) {
   _drawCommitHnd = null;
   $('draw-polygon-btn').disabled     = false;
   $('draw-cancel-btn').style.display = 'none';
+  updateCount();
   setStatus('idle', `"${name}" added — click Analyse to fetch amenities.`);
 }
 
@@ -443,6 +459,7 @@ function resetLocations() {
   $('diagram-loading').style.display = 'none';
   $('diagram-empty').style.display = '';
   _paletteIdx = 0;
+  updateCount();
 }
 
 function resetAll() {
@@ -473,6 +490,7 @@ function addChip(loc) {
   state.locations.push({ ...loc, selected: true, status: 'pending' });
   $('analyze-btn').style.display = '';
   $('reset-btn').style.display = '';
+  updateCount();
 }
 
 function updateChip(id, status, displayName) {
@@ -530,6 +548,7 @@ function removeLocation(id) {
     $('analyze-btn').style.display = 'none';
     $('reset-btn').style.display = 'none';
   }
+  updateCount();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1121,15 +1140,15 @@ function downloadSVG() {
   // Embed Inter from Google Fonts
   const style = document.createElementNS(ns, 'style');
   style.textContent =
-    "@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');" +
-    'text{font-family:"Inter",system-ui,sans-serif;}' +
+    "@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap');" +
+    'text{font-family:"Open Sans",system-ui,sans-serif;}' +
     '.bubble-label{font-weight:600;text-anchor:middle;dominant-baseline:middle;fill:white;pointer-events:none;}';
   out.appendChild(style);
 
   // Background
   const bg = document.createElementNS(ns, 'rect');
   bg.setAttribute('width', W); bg.setAttribute('height', TOTAL_H);
-  bg.setAttribute('fill', '#dce3ea');
+  bg.setAttribute('fill', '#f6f7f8');
   out.appendChild(bg);
 
   // ── Bubble chart — clone live SVG contents, reset any zoom transform
