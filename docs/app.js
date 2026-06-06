@@ -153,38 +153,6 @@ window.addEventListener('DOMContentLoaded', () => {
   });
 });
 
-// Replaces Leaflet's stepped scroll-zoom with a fluid, eased version.
-// Each wheel event nudges a target zoom level; a rAF loop eases the map
-// toward it so the motion is continuous rather than click-stepped.
-function enableSmoothZoom(map) {
-  map.scrollWheelZoom.disable();
-
-  let targetZoom = null;
-  let ticking    = false;
-
-  map.getContainer().addEventListener('wheel', e => {
-    e.preventDefault();
-    // Normalise deltaY across deltaMode: 0 = pixels (trackpad), 1 = lines (mouse)
-    const px    = e.deltaMode === 1 ? e.deltaY * 32 : e.deltaY;
-    const delta = -px / 220;   // zoom units per 220 px of scroll
-    const base  = targetZoom !== null ? targetZoom : map.getZoom();
-    targetZoom  = Math.max(map.getMinZoom(),
-                  Math.min(map.getMaxZoom(), base + delta));
-    if (!ticking) { ticking = true; requestAnimationFrame(step); }
-  }, { passive: false });
-
-  function step() {
-    const diff = targetZoom - map.getZoom();
-    if (Math.abs(diff) < 0.004) {
-      map.setZoom(targetZoom, { animate: false });
-      targetZoom = null; ticking = false;
-      return;
-    }
-    map.setZoom(map.getZoom() + diff * 0.18, { animate: false });
-    requestAnimationFrame(step);
-  }
-}
-
 function fitWorldView(map) {
   map.invalidateSize();
   const w = map.getSize().x;
@@ -199,8 +167,6 @@ function initMap() {
     attribution: '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
     subdomains: 'abcd', maxZoom: 19,
   }).addTo(state.map);
-
-  enableSmoothZoom(state.map);
 
   // Wait one frame so the flex container has its final pixel dimensions before
   // fitting — prevents the grey-at-top bug on large / HiDPI displays.

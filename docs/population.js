@@ -90,8 +90,6 @@ function initPopMap() {
     subdomains: 'abcd', maxZoom: 19,
   }).addTo(popState.map);
 
-  enableSmoothZoom(popState.map);
-
   // Live radius readout while drawing / editing circle buffers
   popState.map.on('editable:drawing:move editable:vertex:drag editable:drag', () => {
     // find the circle being interacted with (if any)
