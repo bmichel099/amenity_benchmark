@@ -81,7 +81,7 @@ function initPopMap() {
   popState.inited = true;
 
   popState.map = L.map('pop-map', {
-    worldCopyJump: true, minZoom: 1, zoomSnap: 0, editable: true,
+    worldCopyJump: true, minZoom: 1, wheelPxPerZoomLevel: 40, editable: true,
   });
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution:

@@ -157,12 +157,12 @@ function fitWorldView(map) {
   map.invalidateSize();
   const w = map.getSize().x;
   if (!w) { setTimeout(() => fitWorldView(map), 60); return; }
-  const zoom = Math.log2(w / 256);   // zoom where 256·2^z (world px) == container px
+  const zoom = Math.round(Math.log2(w / 256));   // nearest integer zoom that fits world width
   map.setView([25, 0], zoom, { animate: false });
 }
 
 function initMap() {
-  state.map = L.map('map', { worldCopyJump: true, minZoom: 1, zoomSnap: 0, editable: true });
+  state.map = L.map('map', { worldCopyJump: true, minZoom: 1, wheelPxPerZoomLevel: 40, editable: true });
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
     subdomains: 'abcd', maxZoom: 19,
