@@ -46,12 +46,16 @@ load_dotenv()
 
 app = FastAPI(title="Amenity Benchmark")
 
-GOOGLE_AI_KEY = os.getenv("GOOGLE_AI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GOOGLE_AI_KEY      = os.getenv("GOOGLE_AI_API_KEY", "")
+GEMINI_MODEL       = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_TEMPERATURE = 0.4
+EXPORT_FILENAME    = "population_estimate.zip"
 
 _client: genai.Client | None = None
 
+
 def get_client() -> genai.Client:
+    """Lazily create (and cache) the Gemini client so import never needs the key."""
     global _client
     if _client is None:
         _client = genai.Client(api_key=GOOGLE_AI_KEY)
@@ -99,6 +103,7 @@ PALETTE = [
 
 
 def build_prompt(category: str, num_locations: int) -> str:
+    """Compose the Gemini prompt: benchmark locations + amenity groups for a category."""
     vocab_str = ", ".join(sorted(AMENITY_VOCABULARY))
     palette_str = ", ".join(PALETTE)
 
@@ -167,22 +172,18 @@ Return ONLY valid JSON with this exact structure. No prose, no markdown:
 """
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
+# ── Gemini service ────────────────────────────────────────────────────────────
 
 
-@app.post("/api/suggest")
-async def suggest(req: SuggestRequest):
-    """Generate AI-driven benchmark locations + dynamic amenity groups."""
-    if not GOOGLE_AI_KEY:
-        raise HTTPException(503, "GOOGLE_AI_API_KEY not configured on the server")
-
+def call_gemini(category: str, num_locations: int) -> dict:
+    """Run the Gemini prompt and return its parsed JSON reply."""
     try:
         response = get_client().models.generate_content(
             model=GEMINI_MODEL,
-            contents=build_prompt(req.category, req.num_locations),
+            contents=build_prompt(category, num_locations),
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
-                temperature=0.4,
+                temperature=GEMINI_TEMPERATURE,
             ),
         )
     except Exception as exc:
@@ -190,23 +191,23 @@ async def suggest(req: SuggestRequest):
 
     raw = (response.text or "").strip()
     try:
-        data = json.loads(raw)
+        return json.loads(raw)
     except json.JSONDecodeError as exc:
         raise HTTPException(500, f"AI returned invalid JSON: {exc}. Raw: {raw[:400]}") from exc
 
-    locations = data.get("locations", [])
-    groups = data.get("groups", [])
-    if not locations or not groups:
-        raise HTTPException(500, "AI response missing 'locations' or 'groups'")
 
-    # Sanity-pass the groups: clamp to vocabulary, fill anything the AI missed
-    seen = set()
-    cleaned_groups = []
-    for g in groups:
+def clean_groups(raw_groups: list[dict]) -> list[dict]:
+    """
+    Sanity-pass the AI's groups: keep only known vocabulary, drop duplicates,
+    and collect anything the AI missed into a final "Other Services" group.
+    """
+    seen: set[str] = set()
+    cleaned: list[dict] = []
+    for g in raw_groups:
         items = [i for i in g.get("items", []) if i in AMENITY_VOCABULARY and i not in seen]
         seen.update(items)
         if items:
-            cleaned_groups.append({
+            cleaned.append({
                 "name": g.get("name", "Group"),
                 "color": g.get("color", "#999999"),
                 "items": items,
@@ -215,24 +216,43 @@ async def suggest(req: SuggestRequest):
 
     missing = AMENITY_VOCABULARY - seen
     if missing:
-        cleaned_groups.append({
+        cleaned.append({
             "name": "Other Services",
             "color": "#999999",
             "items": sorted(missing),
             "description": "Amenities not strongly associated with this location type",
         })
+    return cleaned
 
-    return {"locations": locations, "groups": cleaned_groups}
+
+# ── Routes ────────────────────────────────────────────────────────────────────
+
+
+@app.post("/api/suggest")
+async def suggest(req: SuggestRequest) -> dict:
+    """Generate AI-driven benchmark locations + dynamic amenity groups."""
+    if not GOOGLE_AI_KEY:
+        raise HTTPException(503, "GOOGLE_AI_API_KEY not configured on the server")
+
+    data = call_gemini(req.category, req.num_locations)
+
+    locations = data.get("locations", [])
+    groups = data.get("groups", [])
+    if not locations or not groups:
+        raise HTTPException(500, "AI response missing 'locations' or 'groups'")
+
+    return {"locations": locations, "groups": clean_groups(groups)}
 
 
 @app.get("/api/defaults")
-async def defaults():
+async def defaults() -> dict:
     """Return the fallback group schema for non-AI modes."""
     return {"groups": DEFAULT_GROUPS}
 
 
 @app.get("/api/health")
-async def health():
+async def health() -> dict:
+    """Report which optional capabilities (AI, population raster) are configured."""
     return {
         "ok": True,
         "ai_configured": bool(GOOGLE_AI_KEY),
@@ -245,17 +265,23 @@ async def health():
 # ── Population estimate ─────────────────────────────────────────────────────────
 
 
-def _require_population():
+def _require_population_module() -> None:
+    """Fail with 503 when the optional geospatial dependencies are not installed."""
     if population is None:
         raise HTTPException(503, f"Population tool unavailable (geo deps missing): {_POP_IMPORT_ERROR}")
+
+
+def _require_raster() -> None:
+    """Fail with 503 when the GHSL raster URL is not configured."""
+    _require_population_module()
     if not population.raster_configured():
         raise HTTPException(503, "GHSL_RASTER_URL not configured on the server")
 
 
 @app.post("/api/population")
-async def population_estimate(req: PopulationRequest):
+async def population_estimate(req: PopulationRequest) -> dict:
     """Estimate population inside each submitted polygon/buffer via GHSL zonal sum."""
-    _require_population()
+    _require_raster()
     try:
         return population.estimate_population([f.model_dump() for f in req.features])
     except Exception as exc:
@@ -263,10 +289,9 @@ async def population_estimate(req: PopulationRequest):
 
 
 @app.post("/api/population/export")
-async def population_export(req: PopulationExportRequest):
+async def population_export(req: PopulationExportRequest) -> Response:
     """Return a zipped shapefile with population estimates appended as attributes."""
-    if population is None:
-        raise HTTPException(503, f"Population tool unavailable: {_POP_IMPORT_ERROR}")
+    _require_population_module()
     try:
         data = population.export_shapefile(
             [f.model_dump() for f in req.features],
@@ -275,29 +300,31 @@ async def population_export(req: PopulationExportRequest):
         return Response(
             content=data,
             media_type="application/zip",
-            headers={"Content-Disposition": 'attachment; filename="population_estimate.zip"'},
+            headers={"Content-Disposition": f'attachment; filename="{EXPORT_FILENAME}"'},
         )
     except Exception as exc:
         raise HTTPException(502, f"Shapefile export failed: {exc}") from exc
 
 
 @app.post("/api/shapefile")
-async def parse_shapefile(file: UploadFile = File(...)):
+async def parse_shapefile(file: UploadFile = File(...)) -> dict:
     """Parse an uploaded zipped shapefile → GeoJSON (WGS84) + geometry type."""
-    if population is None:
-        raise HTTPException(503, f"Population tool unavailable (geo deps missing): {_POP_IMPORT_ERROR}")
+    _require_population_module()
+    data = await file.read()
     try:
-        data = await file.read()
         return population.parse_shapefile(data)
+    except ValueError as exc:
+        # User-correctable problems (too many features, no .shp inside, …)
+        raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(400, f"Could not read shapefile: {exc}") from exc
+        raise HTTPException(500, f"Could not read shapefile: {exc}") from exc
 
 
 # ── Static frontend ───────────────────────────────────────────────────────────
 
 
 @app.get("/")
-async def index():
+async def index() -> FileResponse:
     return FileResponse("docs/index.html")
 
 

@@ -34,11 +34,24 @@ os.environ.setdefault("GDAL_HTTP_MERGE_CONSECUTIVE_RANGES", "YES")
 
 GHSL_RASTER_URL = os.getenv("GHSL_RASTER_URL", "")
 
-WGS84           = "EPSG:4326"
-MOLLWEIDE       = "ESRI:54009"   # native GHSL CRS — used as fallback when raster unreachable
+WGS84     = "EPSG:4326"
+MOLLWEIDE = "ESRI:54009"   # native GHSL CRS — used as fallback when raster unreachable
+
+# Unit conversions
+M_PER_KM   = 1000.0
+M2_PER_KM2 = 1_000_000.0
+
+# Upload guards — large shapefiles would exhaust memory / request timeouts
+MAX_UPLOAD_FEATURES = 50
+MAX_UPLOAD_BYTES    = 20 * 1024 * 1024   # 20 MB zip
+
+# ESRI .shx index format: fixed 100-byte header, then one 8-byte record per feature
+SHX_HEADER_BYTES     = 100
+SHX_BYTES_PER_RECORD = 8
 
 
 def raster_configured() -> bool:
+    """True when a GHSL raster URL is set in the environment."""
     return bool(GHSL_RASTER_URL)
 
 
@@ -64,6 +77,36 @@ def _ea_crs() -> str:
         except Exception:
             pass
     return MOLLWEIDE
+
+
+def _features_to_gdf(features: list[dict]) -> tuple[gpd.GeoDataFrame, list[dict]]:
+    """
+    Build a WGS84 GeoDataFrame from GeoJSON-ish feature dicts, skipping any
+    without geometry. Returns (gdf, meta) where meta is a parallel list of
+    {id, name, buffer_km} per row.
+    """
+    geoms, meta = [], []
+    for f in features:
+        geom = f.get("geometry")
+        if not geom:
+            continue
+        geoms.append(shape(geom))
+        meta.append({
+            "id": f.get("id"),
+            "name": f.get("name") or "Area",
+            "buffer_km": f.get("buffer_km"),
+        })
+    gdf = gpd.GeoDataFrame(geometry=geoms, crs=WGS84)
+    return gdf, meta
+
+
+def _apply_buffers(gdf: gpd.GeoDataFrame, meta: list[dict]) -> gpd.GeoDataFrame:
+    """Buffer rows (metres) where buffer_km is set. gdf must be in an equal-area CRS."""
+    for i, m in enumerate(meta):
+        bkm = m.get("buffer_km")
+        if bkm:
+            gdf.at[i, "geometry"] = gdf.geometry.iloc[i].buffer(float(bkm) * M_PER_KM)
+    return gdf
 
 
 def _extract_sums(ds, gdf: gpd.GeoDataFrame) -> list[float]:
@@ -105,59 +148,34 @@ def estimate_population(features: list[dict]) -> dict:
     """
     if not raster_configured():
         raise RuntimeError("GHSL_RASTER_URL not configured on the server")
-    if not features:
+
+    gdf, meta = _features_to_gdf(features)
+    if not len(gdf):
         return {"results": [], "total": 0.0}
 
-    geoms, meta = [], []
-    for f in features:
-        geom = f.get("geometry")
-        if not geom:
-            continue
-        geoms.append(shape(geom))
-        meta.append({
-            "id": f.get("id"),
-            "name": f.get("name") or "Area",
-            "buffer_km": f.get("buffer_km"),
-        })
-
-    if not geoms:
-        return {"results": [], "total": 0.0}
-
-    gdf = gpd.GeoDataFrame({"_i": range(len(geoms))}, geometry=geoms, crs=WGS84)
-
-    # Reproject into the raster's equal-area CRS, then buffer (metres) where asked.
     gdf = gdf.to_crs(_ea_crs())
-    for i, m in enumerate(meta):
-        bkm = m.get("buffer_km")
-        if bkm:
-            gdf.loc[gdf["_i"] == i, "geometry"] = gdf.loc[gdf["_i"] == i, "geometry"].buffer(float(bkm) * 1000.0)
+    gdf = _apply_buffers(gdf, meta)
 
     # Repair any invalid geometries (self-intersections etc.) that can trigger
     # exactextract's internal assertions on large/diverse polygon sets.
     gdf["geometry"] = gdf.geometry.buffer(0)
 
-    # Area (km²) in the equal-area CRS
-    areas_km2 = (gdf.geometry.area / 1_000_000.0).tolist()
+    areas_km2 = (gdf.geometry.area / M2_PER_KM2).tolist()
 
     with rasterio.open(_vsi_path(GHSL_RASTER_URL)) as ds:
         sums = _extract_sums(ds, gdf)
 
     results, total = [], 0.0
-    for m, s, a in zip(meta, sums, areas_km2):
-        pop = s
+    for m, pop, area in zip(meta, sums, areas_km2):
         total += pop
         results.append({
             "id": m["id"],
             "name": m["name"],
             "population": round(pop),
-            "area_km2": round(a, 3),
+            "area_km2": round(area, 3),
         })
 
     return {"results": results, "total": round(total)}
-
-
-MAX_UPLOAD_FEATURES = 50
-MAX_UPLOAD_BYTES    = 20 * 1024 * 1024   # 20 MB zip
 
 
 def parse_shapefile(zip_bytes: bytes) -> dict:
@@ -165,6 +183,9 @@ def parse_shapefile(zip_bytes: bytes) -> dict:
     Parse an uploaded zipped shapefile (or zipped GeoJSON/GeoPackage).
     Returns { "geojson": <FeatureCollection>, "geometry_type": "point"|"polygon" }
     with geometries reprojected to WGS84 for display/drawing.
+
+    Raises ValueError for user-correctable problems (size/feature limits,
+    missing vector layer).
     """
     if len(zip_bytes) > MAX_UPLOAD_BYTES:
         raise ValueError(
@@ -192,19 +213,7 @@ def parse_shapefile(zip_bytes: bytes) -> dict:
         if not inner:
             raise ValueError("No .shp, .geojson or .gpkg found inside the archive")
 
-        # Quick feature-count check via SHX before loading geometry
-        shx_name = inner[:-4] + ".shx" if inner.lower().endswith(".shp") else None
-        if shx_name and shx_name in names:
-            with zipfile.ZipFile(zpath) as zf:
-                with zf.open(shx_name) as shx:
-                    shx_bytes = shx.read()
-            shx_size   = len(shx_bytes)
-            num_feats  = (shx_size - 100) // 8 if shx_size >= 100 else 0
-            if num_feats > MAX_UPLOAD_FEATURES:
-                raise ValueError(
-                    f"File contains {num_feats:,} features — the limit is "
-                    f"{MAX_UPLOAD_FEATURES:,}. Please upload a smaller subset."
-                )
+        _check_feature_count_via_shx(zpath, names, inner)
 
         gdf = gpd.read_file(f"/vsizip/{zpath}/{inner}")
 
@@ -228,6 +237,32 @@ def parse_shapefile(zip_bytes: bytes) -> dict:
     }
 
 
+def _check_feature_count_via_shx(zpath: str, names: list[str], inner: str) -> None:
+    """
+    Cheap feature-count check before loading any geometry: the .shx index file's
+    size encodes the record count, so oversized uploads are rejected without the
+    memory cost of reading the .shp itself.
+    """
+    if not inner.lower().endswith(".shp"):
+        return
+    shx_name = inner[:-4] + ".shx"
+    if shx_name not in names:
+        return
+
+    with zipfile.ZipFile(zpath) as zf:
+        with zf.open(shx_name) as shx:
+            shx_size = len(shx.read())
+
+    if shx_size < SHX_HEADER_BYTES:
+        return
+    num_feats = (shx_size - SHX_HEADER_BYTES) // SHX_BYTES_PER_RECORD
+    if num_feats > MAX_UPLOAD_FEATURES:
+        raise ValueError(
+            f"File contains {num_feats:,} features — the limit is "
+            f"{MAX_UPLOAD_FEATURES:,}. Please upload a smaller subset."
+        )
+
+
 def export_shapefile(features: list[dict], results: list[dict]) -> bytes:
     """
     Build a GeoDataFrame from features (applying buffers where buffer_km is set),
@@ -237,38 +272,26 @@ def export_shapefile(features: list[dict], results: list[dict]) -> bytes:
     if not features:
         raise ValueError("No features to export")
 
-    results_by_id = {r["id"]: r for r in results}
+    gdf, meta = _features_to_gdf(features)
+    if not len(gdf):
+        raise ValueError("No features to export")
 
-    geoms, rows = [], []
-    for f in features:
-        geom = f.get("geometry")
-        if not geom:
-            continue
-        geoms.append(shape(geom))
-        rows.append({
-            "name":       f.get("name") or "Area",
-            "buffer_km":  f.get("buffer_km"),
-        })
-
-    gdf = gpd.GeoDataFrame(rows, geometry=geoms, crs=WGS84)
+    gdf["name"]      = [m["name"] for m in meta]
+    gdf["buffer_km"] = [m["buffer_km"] for m in meta]
 
     # Buffer points into polygons (circles + point shapefiles) in equal-area CRS
-    ea = _ea_crs()
-    gdf_ea = gdf.to_crs(ea)
-    for i, f in enumerate(features[:len(geoms)]):
-        bkm = f.get("buffer_km")
-        if bkm:
-            gdf_ea.at[i, "geometry"] = gdf_ea.geometry.iloc[i].buffer(float(bkm) * 1000.0)
+    gdf_ea = gdf.to_crs(_ea_crs())
+    gdf_ea = _apply_buffers(gdf_ea, meta)
 
     # Area in equal-area CRS, then bring back to WGS84 for the exported file
-    gdf_ea["area_km2"] = (gdf_ea.geometry.area / 1_000_000.0).round(3)
+    gdf_ea["area_km2"] = (gdf_ea.geometry.area / M2_PER_KM2).round(3)
     gdf = gdf_ea.to_crs(WGS84)
 
     # Append population results (null where estimate hasn't been run)
-    feat_ids = [f.get("id") for f in features[:len(geoms)]]
+    results_by_id = {r["id"]: r for r in results}
     gdf["population"] = [
-        results_by_id[fid]["population"] if fid in results_by_id else None
-        for fid in feat_ids
+        results_by_id[m["id"]]["population"] if m["id"] in results_by_id else None
+        for m in meta
     ]
     # density column (people / km²) — null if either value missing
     gdf["density"] = [

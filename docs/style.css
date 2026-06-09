@@ -311,6 +311,9 @@ header {
 .map-legend-title { font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-4); margin-bottom: 9px; }
 .map-legend-row { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--ink-2); padding: 2.5px 0; }
 .map-legend-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; border: 1.5px solid rgba(255,255,255,0.9); box-shadow: 0 1px 3px rgba(19,21,23,0.22); }
+.map-legend-dot.outline { background: transparent; border: 1.5px solid var(--ink-3); box-shadow: none; }
+.map-legend-dot.solid { background: var(--ink-3); }
+.map-legend-note { color: var(--ink-4); font-size: 11px; margin-top: 4px; }
 
 .radius-readout {
   position: absolute; top: 16px; left: 50%; transform: translateX(-50%); z-index: 650;
@@ -375,6 +378,7 @@ header {
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Population results */
+.pop-total-wrap { padding: 16px 24px 4px; }
 .pop-total {
   font-size: 26px; font-weight: 300; letter-spacing: var(--tracking-display);
   color: var(--ink); margin-top: 6px; font-variant-numeric: tabular-nums; line-height: 1.1;

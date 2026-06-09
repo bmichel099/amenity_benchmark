@@ -43,6 +43,27 @@ const state = {
 const NOMINATIM = 'https://nominatim.openstreetmap.org';
 const OVERPASS  = 'https://overpass-api.de/api/interpreter';
 
+// ── Tunables ─────────────────────────────────────────────────────────────────
+const CONTACT_EMAIL           = 'bench.michin@gmail.com'; // identifies us to Nominatim
+const NOMINATIM_DELAY_MS      = 1150;                     // ≥1 req/s per usage policy
+const OVERPASS_RETRY_DELAYS_MS = [4000, 10000, 20000];    // back-off after 429s
+const FIT_MAX_ZOOM            = 13;                       // cap when fitting to boundaries
+const TILE_MAX_ZOOM           = 19;
+
+// Client-side copy of the server's DEFAULT_GROUPS (amenity_config.py) — used
+// only when /api/defaults is unreachable so the app still works offline.
+const FALLBACK_GROUPS = [
+  { name:'Dining',             color:'#E69F00', items:['restaurant','restaurant;bar','cafe','coffee','fast_food','biergarten','ice_cream'] },
+  { name:'Nightlife',          color:'#D55E00', items:['bar','pub','nightclub','casino'] },
+  { name:'Food Retail',        color:'#56B4E9', items:['supermarket','convenience','bakery','butcher','cheese','deli','pastry','chocolate','health_food','alcohol','general','confectionery','wine','farm'] },
+  { name:'Sports & Recreation', color:'#009E73', items:['sports','outdoor','ski','ski_rental','ski_school','avalanche_transceiver','snow_park','bicycle_rental','water_sports','boat_rental','fitness_equipment','lift_tickets','bicycle'] },
+  { name:'Fashion & Beauty',   color:'#CC79A7', items:['clothes','shoes','fashion_accessories','leather','tailor','cosmetics','perfumery','beauty','hairdresser','optician'] },
+  { name:'Health & Medical',   color:'#0072B2', items:['pharmacy','clinic','doctors','hospital','dentist','medical_supply','hearing_aids','chemist','veterinary','massage','public_bath'] },
+  { name:'Gifts & Speciality', color:'#F0E442', items:['gift','jewelry','second_hand','variety_store','craft','toys','florist','stationery','books','newsagent','kiosk','photo','tobacco'] },
+  { name:'Home & Electronics', color:'#999999', items:['furniture','houseware','interior_decoration','hardware','doityourself','electrical','garden_centre','paint','kitchen','wholesale','department_store','mall','electronics','computer','mobile_phone','hifi','camera','bed','studio'] },
+  { name:'Culture & Community',color:'#44AA99', items:['bank','cinema','travel_agency','dry_cleaning','laundry','theatre','locksmith','arts_centre','art','music_school','conference_centre','library','place_of_worship','school','kindergarten','childcare','community_centre','social_facility','clubhouse','driving_school'] },
+];
+
 const BOUNDARY_PALETTE = ['#2563eb','#7c3aed','#059669','#dc2626','#d97706',
                           '#0891b2','#db2777','#65a30d','#ea580c','#6366f1',
                           '#0ea5e9','#f43f5e','#84cc16','#a855f7'];
@@ -59,7 +80,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const $     = id => document.getElementById(id);
 const fmt   = s  => s.replace(/_/g,' ').replace(/;/g,'/').replace(/\b\w/g, c => c.toUpperCase());
 
-function hexToPasstel(hex, mix = 0.82) {
+function hexToPastel(hex, mix = 0.82) {
   const h = hex.replace('#','');
   let r = parseInt(h.slice(0,2),16), g = parseInt(h.slice(2,4),16), b = parseInt(h.slice(4,6),16);
   r = Math.round(r + (255-r)*mix); g = Math.round(g + (255-g)*mix); b = Math.round(b + (255-b)*mix);
@@ -69,6 +90,47 @@ function hexToPasstel(hex, mix = 0.82) {
 function setStatus(type, msg) {
   $('status-dot').className = `status-dot ${type === 'idle' ? '' : type}`;
   $('status-msg').textContent = msg;
+}
+
+// Download `content` (string or Blob) as a file. Shared by every export button.
+function triggerDownload(content, filename, mime = 'application/octet-stream') {
+  const blob = content instanceof Blob ? content : new Blob([content], { type: mime });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+// Bind (or re-bind) the permanent centre label shown on a map shape.
+// Used by both tools so labels look and behave identically everywhere.
+function bindShapeLabel(layer, name) {
+  if (layer.eachLayer) layer.eachLayer(sub => sub.unbindTooltip && sub.unbindTooltip());
+  layer.unbindTooltip();
+  layer.bindTooltip(name, { permanent: true, direction: 'center', className: 'polygon-label', sticky: false });
+}
+
+// Build a location/area chip and append it to `bar`. Both tools share this so
+// chips stay visually and behaviourally identical.
+function createChip(bar, { id, name, country, loading, dotColor, onRemove, onClick }) {
+  const chip = document.createElement('div');
+  chip.className = `location-chip selected${loading ? ' loading' : ''}`;
+  chip.dataset.id = id;
+  chip.innerHTML = `
+    ${loading
+      ? '<span class="chip-spinner"></span>'
+      : `<span class="chip-dot" style="background:${dotColor || 'var(--green)'}"></span>`}
+    <span class="chip-name">${name}</span>
+    ${country ? `<span style="color:var(--text-3);font-size:11px">${country}</span>` : ''}
+    <span class="chip-remove" title="Remove">×</span>
+  `;
+  chip.querySelector('.chip-remove').addEventListener('click', e => {
+    e.stopPropagation();
+    onRemove();
+  });
+  if (onClick) chip.addEventListener('click', onClick);
+  bar.appendChild(chip);
+  return chip;
 }
 
 // ── Shared modal helpers ─────────────────────────────────────────────────────
@@ -88,38 +150,47 @@ function hideThinking() {
   $('thinking-modal').style.display  = 'none';
 }
 
-// Shared rename modal — used by both tools. Calls onConfirm(newName) when the
-// user saves a non-empty name; does nothing on cancel.
-let _renameOnConfirm = null;
-function openRenameModal(currentName, onConfirm) {
-  _renameOnConfirm = onConfirm;
-  const input = $('rename-input');
-  input.value = currentName || '';
-  $('rename-modal').style.display = 'flex';
+// Generic name-input modal — one DOM modal serves all three flows (naming a
+// drawn amenity boundary, naming a population area, renaming any shape).
+// onConfirm receives the trimmed name (may be empty — callers apply defaults).
+let _nameModalCbs = null;
+
+function promptForName({ overline, title, confirmLabel, placeholder, defaultValue = '', onConfirm, onCancel }) {
+  _nameModalCbs = { onConfirm, onCancel };
+  $('name-modal-overline').textContent = overline;
+  $('name-modal-title').textContent    = title;
+  $('name-modal-confirm').textContent  = confirmLabel;
+  const input = $('name-modal-input');
+  input.placeholder = placeholder || 'e.g. Area 1';
+  input.value = defaultValue;
+  $('name-modal').style.display = 'flex';
   setTimeout(() => { input.focus(); input.select(); }, 50);
 }
-window.addEventListener('DOMContentLoaded', () => {
-  const confirm = () => {
-    const name = $('rename-input').value.trim();
-    $('rename-modal').style.display = 'none';
-    const cb = _renameOnConfirm;
-    _renameOnConfirm = null;
-    if (cb && name) cb(name);
-  };
-  const cancel = () => {
-    $('rename-modal').style.display = 'none';
-    _renameOnConfirm = null;
-  };
-  $('rename-confirm').addEventListener('click', confirm);
-  $('rename-cancel').addEventListener('click', cancel);
-  $('rename-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter')  confirm();
-    if (e.key === 'Escape') cancel();
+
+// Rename flow on top of the generic modal — ignores empty submissions.
+function openRenameModal(currentName, onConfirm) {
+  promptForName({
+    overline: 'Rename', title: 'Rename this shape', confirmLabel: 'Save name',
+    defaultValue: currentName || '',
+    onConfirm: name => { if (name) onConfirm(name); },
   });
-  $('rename-modal').addEventListener('click', e => {
-    if (e.target === $('rename-modal')) cancel();
+}
+
+function bindNameModal() {
+  const finish = which => {
+    const cbs = _nameModalCbs;
+    _nameModalCbs = null;
+    const name = $('name-modal-input').value.trim();
+    $('name-modal').style.display = 'none';
+    if (cbs?.[which]) cbs[which](name);
+  };
+  $('name-modal-confirm').addEventListener('click', () => finish('onConfirm'));
+  $('name-modal-cancel').addEventListener('click',  () => finish('onCancel'));
+  $('name-modal-input').addEventListener('keydown', e => {
+    if (e.key === 'Enter')  finish('onConfirm');
+    if (e.key === 'Escape') finish('onCancel');
   });
-});
+}
 
 function setGroups(groups) {
   state.groups = groups;
@@ -140,6 +211,7 @@ function setGroups(groups) {
 window.addEventListener('DOMContentLoaded', () => {
   initMap();
   bindEvents();
+  bindNameModal();
   loadDefaultGroups();
   setMode('ai');
   updateCount();
@@ -165,7 +237,7 @@ function initMap() {
   state.map = L.map('map', { worldCopyJump: true, minZoom: 1, wheelPxPerZoomLevel: 40, editable: true });
   L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     attribution: '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
-    subdomains: 'abcd', maxZoom: 19,
+    subdomains: 'abcd', maxZoom: TILE_MAX_ZOOM,
   }).addTo(state.map);
 
   // Wait one frame so the flex container has its final pixel dimensions before
@@ -196,24 +268,6 @@ function bindEvents() {
   $('reset-btn').addEventListener('click',   resetAll);
   $('download-svg-btn').addEventListener('click', downloadSVG);
   $('download-geojson-btn').addEventListener('click', downloadAmenitiesGeoJSON);
-
-  // Draw label modal
-  $('draw-label-confirm').addEventListener('click', () => {
-    const name = $('draw-label-input').value.trim() || 'Custom Area';
-    $('draw-label-modal').style.display = 'none';
-    if (_drawingLayer) addDrawnPolygon(_drawingLayer, name);
-  });
-  $('draw-label-cancel').addEventListener('click', () => {
-    $('draw-label-modal').style.display = 'none';
-    if (_drawingLayer) { state.map.removeLayer(_drawingLayer); _drawingLayer = null; }
-    $('draw-polygon-btn').disabled = false;
-    $('draw-cancel-btn').style.display = 'none';
-    setStatus('idle', 'Draw cancelled.');
-  });
-  $('draw-label-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter')  $('draw-label-confirm').click();
-    if (e.key === 'Escape') $('draw-label-cancel').click();
-  });
 
   $('ctx-rename-btn').addEventListener('click', () => {
     if (!_ctxTarget) return;
@@ -298,17 +352,7 @@ async function loadDefaultGroups() {
     const res = await fetch('/api/defaults');
     if (res.ok) setGroups((await res.json()).groups);
   } catch {
-    setGroups([
-      { name:'Dining',             color:'#E69F00', items:['restaurant','restaurant;bar','cafe','coffee','fast_food','biergarten','ice_cream'] },
-      { name:'Nightlife',          color:'#D55E00', items:['bar','pub','nightclub','casino'] },
-      { name:'Food Retail',        color:'#56B4E9', items:['supermarket','convenience','bakery','butcher','cheese','deli','pastry','chocolate','health_food','alcohol','general','confectionery','wine','farm'] },
-      { name:'Sports & Recreation', color:'#009E73', items:['sports','outdoor','ski','ski_rental','ski_school','avalanche_transceiver','snow_park','bicycle_rental','water_sports','boat_rental','fitness_equipment','lift_tickets','bicycle'] },
-      { name:'Fashion & Beauty',   color:'#CC79A7', items:['clothes','shoes','fashion_accessories','leather','tailor','cosmetics','perfumery','beauty','hairdresser','optician'] },
-      { name:'Health & Medical',   color:'#0072B2', items:['pharmacy','clinic','doctors','hospital','dentist','medical_supply','hearing_aids','chemist','veterinary','massage','public_bath'] },
-      { name:'Gifts & Speciality', color:'#F0E442', items:['gift','jewelry','second_hand','variety_store','craft','toys','florist','stationery','books','newsagent','kiosk','photo','tobacco'] },
-      { name:'Home & Electronics', color:'#999999', items:['furniture','houseware','interior_decoration','hardware','doityourself','electrical','garden_centre','paint','kitchen','wholesale','department_store','mall','electronics','computer','mobile_phone','hifi','camera','bed','studio'] },
-      { name:'Culture & Community',color:'#44AA99', items:['bank','cinema','travel_agency','dry_cleaning','laundry','theatre','locksmith','arts_centre','art','music_school','conference_centre','library','place_of_worship','school','kindergarten','childcare','community_centre','social_facility','clubhouse','driving_school'] },
-    ]);
+    setGroups(FALLBACK_GROUPS);
   }
 }
 
@@ -323,10 +367,19 @@ function handleDrawPolygon() {
 
   _drawCommitHnd = e => {
     _drawingLayer = e.layer;
-    const input = $('draw-label-input');
-    input.value = '';
-    $('draw-label-modal').style.display = 'flex';
-    setTimeout(() => input.focus(), 50);
+    promptForName({
+      overline: 'New area', title: 'Name this area', confirmLabel: 'Add location',
+      placeholder: 'e.g. Custom District, My Polygon…',
+      onConfirm: name => {
+        if (_drawingLayer) addDrawnPolygon(_drawingLayer, name || 'Custom Area');
+      },
+      onCancel: () => {
+        if (_drawingLayer) { state.map.removeLayer(_drawingLayer); _drawingLayer = null; }
+        $('draw-polygon-btn').disabled = false;
+        $('draw-cancel-btn').style.display = 'none';
+        setStatus('idle', 'Draw cancelled.');
+      },
+    });
   };
   state.map.once('editable:drawing:commit', _drawCommitHnd);
   state.map.editTools.startPolygon();
@@ -369,34 +422,14 @@ function addDrawnPolygon(layer, name) {
     selected:     true,
   };
 
-  state.locations.push(loc);
-
-  // Add chip in ready state immediately (no geocoding needed)
-  const bar = $('locations-bar');
-  bar.classList.add('visible');
-  const chip = document.createElement('div');
-  chip.className = 'location-chip selected';
-  chip.dataset.id = loc._id;
-  chip.innerHTML = `
-    <span class="chip-dot" style="background:var(--green)"></span>
-    <span class="chip-name">${name}</span>
-    <span class="chip-remove" title="Remove">×</span>
-  `;
-  chip.querySelector('.chip-remove').addEventListener('click', e => {
-    e.stopPropagation(); removeLocation(loc._id);
-  });
-  chip.addEventListener('click', () => toggleLocation(loc._id));
-  bar.appendChild(chip);
-
+  // Chip is born ready — no geocoding needed for hand-drawn boundaries
+  addChip(loc, 'ready');
   showBoundary(loc._id, geojson, name);
-  $('analyze-btn').style.display = '';
-  $('reset-btn').style.display   = '';
 
   _drawingLayer  = null;
   _drawCommitHnd = null;
   $('draw-polygon-btn').disabled     = false;
   $('draw-cancel-btn').style.display = 'none';
-  updateCount();
   setStatus('idle', `"${name}" added — click Analyse to fetch amenities.`);
 }
 
@@ -416,6 +449,33 @@ async function handleOsmAdd(osmType) {
   await addOsmLocations(q, osmType);
 }
 
+// Pure data fetch: POST the category to /api/suggest and return the parsed
+// response, throwing a readable Error on any failure. No DOM access.
+async function fetchSuggestions(category, numLocations) {
+  const res = await fetch('/api/suggest', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ category, num_locations: numLocations }),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    const detail = Array.isArray(err.detail)
+      ? err.detail.map(e => e.msg || JSON.stringify(e)).join('; ')
+      : (err.detail || res.statusText);
+    throw new Error(detail);
+  }
+  return res.json();
+}
+
+// Geocode each location in sequence, pausing between requests to respect
+// Nominatim's rate limit.
+async function geocodeAll(locs) {
+  for (const loc of locs) {
+    await geocodeLoc(loc);
+    await sleep(NOMINATIM_DELAY_MS);
+  }
+}
+
 async function aiSearch(category) {
   const numLocations = parseInt($('num-locations').value, 10) || 15;
   setStatus('loading', `Asking Gemini for "${category}" benchmark locations…`);
@@ -423,23 +483,8 @@ async function aiSearch(category) {
   $('search-btn').disabled = true;
 
   try {
-    const res = await fetch('/api/suggest', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ category, num_locations: numLocations }),
-    });
-
+    const data = await fetchSuggestions(category, numLocations);
     hideThinking();
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      const detail = Array.isArray(err.detail)
-        ? err.detail.map(e => e.msg || JSON.stringify(e)).join('; ')
-        : (err.detail || res.statusText);
-      throw new Error(detail);
-    }
-
-    const data = await res.json();
     setGroups(data.groups);
 
     const locs = data.locations || [];
@@ -447,15 +492,11 @@ async function aiSearch(category) {
 
     // AI search resets everything for a fresh benchmark set
     resetLocations();
-
     for (const loc of locs) {
       loc._id = crypto.randomUUID();
       addChip(loc);
     }
-    for (const loc of locs) {
-      await geocodeLoc(loc);
-      await sleep(1150);
-    }
+    await geocodeAll(locs);
     setStatus('idle', `${locs.length} locations ready · ${state.groups.length} amenity groups. Click Analyse.`);
   } catch (e) {
     hideThinking();
@@ -487,7 +528,7 @@ async function addOsmLocations(input, osmType) {
     };
     addChip(loc);
     await geocodeLocByOsmId(loc);
-    await sleep(1150);
+    await sleep(NOMINATIM_DELAY_MS);
   }
   setStatus('idle', `${ids.length} ${typeLabel}(s) added. Click Analyse to update.`);
   btn.disabled = false;
@@ -522,27 +563,20 @@ function resetAll() {
   $('search-input').value = '';
 }
 
-function addChip(loc) {
+function addChip(loc, status = 'pending') {
   const bar = $('locations-bar');
   bar.classList.add('visible');
 
-  const chip = document.createElement('div');
-  chip.className = 'location-chip selected loading';
-  chip.dataset.id = loc._id;
-  chip.innerHTML = `
-    <span class="chip-spinner"></span>
-    <span class="chip-name">${loc.name}</span>
-    ${loc.country ? `<span style="color:var(--text-3);font-size:11px">${loc.country}</span>` : ''}
-    <span class="chip-remove" title="Remove">×</span>
-  `;
-  chip.querySelector('.chip-remove').addEventListener('click', e => {
-    e.stopPropagation();
-    removeLocation(loc._id);
+  createChip(bar, {
+    id:      loc._id,
+    name:    loc.name,
+    country: loc.country,
+    loading: status === 'pending',
+    onRemove: () => removeLocation(loc._id),
+    onClick:  () => toggleLocation(loc._id),
   });
-  chip.addEventListener('click', () => toggleLocation(loc._id));
-  bar.appendChild(chip);
 
-  state.locations.push({ ...loc, selected: true, status: 'pending' });
+  state.locations.push({ ...loc, selected: true, status });
   $('analyze-btn').style.display = '';
   $('reset-btn').style.display = '';
   updateCount();
@@ -580,11 +614,7 @@ function renameLocation(id, newName) {
 
   // Update the polygon's permanent tooltip label
   const layer = state.boundaryLayers[id];
-  if (layer) {
-    layer.eachLayer(sub => sub.unbindTooltip && sub.unbindTooltip());
-    layer.unbindTooltip();
-    layer.bindTooltip(newName, { permanent: true, direction: 'center', className: 'polygon-label', sticky: false });
-  }
+  if (layer) bindShapeLabel(layer, newName);
 }
 
 function toggleLocation(id) {
@@ -636,7 +666,7 @@ async function callNominatim(q, limit = 5) {
   url.searchParams.set('limit', limit);
   url.searchParams.set('polygon_geojson', '1');
   url.searchParams.set('addressdetails', '1');
-  url.searchParams.set('email', 'bench.michin@gmail.com');
+  url.searchParams.set('email', CONTACT_EMAIL);
   const res = await fetch(url, { headers:{ Accept:'application/json' } });
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   return res.json();
@@ -647,7 +677,7 @@ async function callNominatimLookup(osmType, osmId) {
   url.searchParams.set('osm_ids', `${osmType[0].toUpperCase()}${osmId}`);
   url.searchParams.set('format', 'json');
   url.searchParams.set('polygon_geojson', '1');
-  url.searchParams.set('email', 'bench.michin@gmail.com');
+  url.searchParams.set('email', CONTACT_EMAIL);
   const res = await fetch(url, { headers:{ Accept:'application/json' } });
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   return res.json();
@@ -716,12 +746,7 @@ function showBoundary(id, geojson, name) {
 
   // Permanent tooltip acts as the polygon label — rendered in Leaflet's tooltip
   // pane (overflow:visible) so it never gets clipped at the map panel edge
-  layer.bindTooltip(name, {
-    permanent: true,
-    direction: 'center',
-    className: 'polygon-label',
-    sticky: false,
-  });
+  bindShapeLabel(layer, name);
 
   state.boundaryLayers[id] = layer;
 
@@ -742,8 +767,20 @@ function showBoundary(id, geojson, name) {
 
   const all = Object.values(state.boundaryLayers);
   if (all.length) {
-    state.map.fitBounds(L.featureGroup(all).getBounds().pad(0.15), { maxZoom: 13 });
+    state.map.fitBounds(L.featureGroup(all).getBounds().pad(0.15), { maxZoom: FIT_MAX_ZOOM });
   }
+}
+
+// Find which selected location's bbox contains this amenity. Returns the
+// location index or -1. Shared by the dot layers and the per-location counts.
+function matchAmenityToLocation(a, selected) {
+  for (let i = 0; i < selected.length; i++) {
+    const bbox = selected[i].bbox;
+    if (!bbox) continue;
+    const [minLat, maxLat, minLon, maxLon] = bbox.map(Number);
+    if (a.lat >= minLat && a.lat <= maxLat && a.lon >= minLon && a.lon <= maxLon) return i;
+  }
+  return -1;
 }
 
 // Create a separate Leaflet LayerGroup of amenity dots per location so we can
@@ -756,16 +793,10 @@ function showAmenityDotsPerLocation(amenities, selected) {
   // Assign each amenity to a location by bbox containment
   const perLocAmenities = selected.map(() => []);
   for (const a of amenities) {
-    for (let i = 0; i < selected.length; i++) {
-      const bbox = selected[i].bbox;
-      if (!bbox) continue;
-      const [minLat, maxLat, minLon, maxLon] = bbox.map(Number);
-      if (a.lat >= minLat && a.lat <= maxLat && a.lon >= minLon && a.lon <= maxLon) {
-        a.benchmark_location = selected[i].display_name?.split(',')[0] || selected[i].name;
-        perLocAmenities[i].push(a);
-        break;
-      }
-    }
+    const i = matchAmenityToLocation(a, selected);
+    if (i < 0) continue;
+    a.benchmark_location = selected[i].display_name?.split(',')[0] || selected[i].name;
+    perLocAmenities[i].push(a);
   }
 
   for (let i = 0; i < selected.length; i++) {
@@ -802,7 +833,8 @@ function geojsonToPoly(geojson) {
   return ring.slice(0, -1).map(([lon, lat]) => `${lat} ${lon}`).join(' ');
 }
 
-async function fetchOverpass(locations) {
+// Build the Overpass QL query string for a set of locations. Pure — no network.
+function buildOverpassQuery(locations) {
   // Relations reliably get area objects in Overpass; ways do not always, so use poly: for them
   const areaLocs = locations.filter(l => !l.edited && l.osm_type === 'relation');
   const polyLocs = locations.filter(l => (l.edited || l.osm_type !== 'relation') && l.geojson);
@@ -835,9 +867,12 @@ async function fetchOverpass(locations) {
     );
   }
   query += `(\n${parts.join(';\n')};\n);\nout center tags;`;
+  return query;
+}
 
-  // Retry up to 3 times on 429 (rate-limit) with exponential back-off
-  const delays = [4000, 10000, 20000];
+// POST a query to Overpass, retrying on 429 rate-limits with back-off.
+async function postOverpassWithRetry(query) {
+  const delays = OVERPASS_RETRY_DELAYS_MS;
   for (let attempt = 0; attempt <= delays.length; attempt++) {
     const res = await fetch(OVERPASS, {
       method: 'POST',
@@ -846,7 +881,7 @@ async function fetchOverpass(locations) {
     if (res.ok) return res.json();
     if (res.status === 429 && attempt < delays.length) {
       const wait = delays[attempt];
-      setStatus('loading', `Overpass rate-limited — retrying in ${wait / 1000}s… (attempt ${attempt + 2}/4)`);
+      setStatus('loading', `Overpass rate-limited — retrying in ${wait / 1000}s… (attempt ${attempt + 2}/${delays.length + 1})`);
       await sleep(wait);
       continue;
     }
@@ -856,6 +891,10 @@ async function fetchOverpass(locations) {
         : `Overpass error ${res.status}`
     );
   }
+}
+
+async function fetchOverpass(locations) {
+  return postOverpassWithRetry(buildOverpassQuery(locations));
 }
 
 function processOverpass(elements) {
@@ -877,16 +916,10 @@ function processOverpass(elements) {
 function assignToLocations(amenities, selected) {
   const perLoc = selected.map(() => ({ counts: {}, total: 0 }));
   for (const a of amenities) {
-    for (let i = 0; i < selected.length; i++) {
-      const bbox = selected[i].bbox;
-      if (!bbox) continue;
-      const [minLat, maxLat, minLon, maxLon] = bbox.map(Number);
-      if (a.lat >= minLat && a.lat <= maxLat && a.lon >= minLon && a.lon <= maxLon) {
-        perLoc[i].counts[a.type] = (perLoc[i].counts[a.type] || 0) + 1;
-        perLoc[i].total++;
-        break;
-      }
-    }
+    const i = matchAmenityToLocation(a, selected);
+    if (i < 0) continue;
+    perLoc[i].counts[a.type] = (perLoc[i].counts[a.type] || 0) + 1;
+    perLoc[i].total++;
   }
   return perLoc;
 }
@@ -1041,15 +1074,8 @@ function applyBubbleLabel(textEl, name, r) {
   return fs1;
 }
 
-function buildBubbleChart(groups) {
-  const svg = d3.select('#bubble-svg');
-  svg.selectAll('*').remove();
-
-  const el = $('bubble-container');
-  const W = el.clientWidth, H = el.clientHeight;
-  if (W < 50 || H < 50) return;
-  svg.attr('viewBox', `0 0 ${W} ${H}`);
-
+// Run d3.pack over the groups and return the laid-out hierarchy root.
+function createPackLayout(groups, W, H) {
   const root = d3.hierarchy({
     name: 'root',
     children: groups.map(g => ({
@@ -1067,7 +1093,12 @@ function buildBubbleChart(groups) {
     return pad * 0.6;
   })(root);
 
-  // ── Zoom ─────────────────────────────────────────────────────────────────
+  return root;
+}
+
+// Wire pan/zoom onto the svg. Returns { toggle(event, d) } used by halo clicks
+// to zoom into / out of a group. Clicking empty space resets the view.
+function attachBubbleZoom(svg, g, W, H) {
   let zoomedGroup = null;
 
   const zoom = d3.zoom()
@@ -1080,42 +1111,45 @@ function buildBubbleChart(groups) {
     });
 
   svg.call(zoom).on('dblclick.zoom', null);
-  svg.on('click', () => {
+
+  const reset = () => {
     zoomedGroup = null;
     svg.style('cursor', 'default');
     svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
-  });
+  };
+  svg.on('click', reset);
 
-  const g = svg.append('g');
-  const tooltip = d3.select('#tooltip');
+  return {
+    toggle(event, d) {
+      event.stopPropagation();
+      if (zoomedGroup === d) { reset(); return; }
+      zoomedGroup = d;
+      svg.style('cursor', 'zoom-out');
+      const k = Math.min(W, H) / (d.r * 2.4);
+      svg.transition().duration(600).call(
+        zoom.transform,
+        d3.zoomIdentity.translate(W / 2 - k * d.x, H / 2 - k * d.y).scale(k)
+      );
+    },
+  };
+}
 
-  // ── Halos ─────────────────────────────────────────────────────────────────
+// Pastel group halos — clicking one zooms into that group.
+function drawHalos(g, root, zoomCtl) {
   g.selectAll('.halo')
     .data(root.children)
     .join('circle')
     .attr('class', 'halo')
     .attr('cx', d => d.x).attr('cy', d => d.y).attr('r', d => d.r)
-    .attr('fill', d => hexToPasstel(d.data.color, 0.83))
+    .attr('fill', d => hexToPastel(d.data.color, 0.83))
     .attr('stroke', 'none')
     .style('cursor', 'zoom-in')
-    .on('click', (event, d) => {
-      event.stopPropagation();
-      if (zoomedGroup === d) {
-        zoomedGroup = null;
-        svg.style('cursor', 'default');
-        svg.transition().duration(500).call(zoom.transform, d3.zoomIdentity);
-      } else {
-        zoomedGroup = d;
-        svg.style('cursor', 'zoom-out');
-        const k = Math.min(W, H) / (d.r * 2.4);
-        svg.transition().duration(600).call(
-          zoom.transform,
-          d3.zoomIdentity.translate(W / 2 - k * d.x, H / 2 - k * d.y).scale(k)
-        );
-      }
-    });
+    .on('click', (event, d) => zoomCtl.toggle(event, d));
+}
 
-  // ── Leaf bubbles ──────────────────────────────────────────────────────────
+// Per-amenity bubbles with hover tooltip.
+function drawLeafBubbles(g, root) {
+  const tooltip = d3.select('#tooltip');
   g.selectAll('.bubble')
     .data(root.leaves())
     .join('circle')
@@ -1131,8 +1165,10 @@ function buildBubbleChart(groups) {
               `<div class="tooltip-detail">avg ${d.data.count.toFixed(1)} · ${(d.data.value*100).toFixed(1)}% · ${d.parent.data.name}</div>`);
     })
     .on('mouseleave', () => tooltip.classed('visible', false));
+}
 
-  // ── Leaf labels (auto-sized, optional 2-line wrap) ────────────────────────
+// Auto-sized amenity labels (hidden until the bubble is big enough on screen).
+function drawLeafLabels(g, root) {
   g.selectAll('.leaf-label')
     .data(root.leaves())
     .join('text')
@@ -1143,8 +1179,10 @@ function buildBubbleChart(groups) {
     .each(function(d) {
       applyBubbleLabel(d3.select(this), d.data.name, d.r);
     });
+}
 
-  // ── Group name labels ─────────────────────────────────────────────────────
+// Group names above each halo (only when the halo is large enough).
+function drawGroupLabels(g, root, W, H) {
   const MIN_HALO_R = Math.min(W, H) * 0.055;
   g.selectAll('.halo-label')
     .data(root.children.filter(d => d.r >= MIN_HALO_R))
@@ -1159,6 +1197,25 @@ function buildBubbleChart(groups) {
     .style('fill', d => d.data.color)
     .style('opacity', 0.85)
     .text(d => d.data.name);
+}
+
+function buildBubbleChart(groups) {
+  const svg = d3.select('#bubble-svg');
+  svg.selectAll('*').remove();
+
+  const el = $('bubble-container');
+  const W = el.clientWidth, H = el.clientHeight;
+  if (W < 50 || H < 50) return;
+  svg.attr('viewBox', `0 0 ${W} ${H}`);
+
+  const root    = createPackLayout(groups, W, H);
+  const g       = svg.append('g');
+  const zoomCtl = attachBubbleZoom(svg, g, W, H);
+
+  drawHalos(g, root, zoomCtl);
+  drawLeafBubbles(g, root);
+  drawLeafLabels(g, root);
+  drawGroupLabels(g, root, W, H);
 }
 
 function buildLegend(groups) {
@@ -1185,58 +1242,21 @@ function buildLegend(groups) {
 // SVG DOWNLOAD — bubble chart + legend in one standalone SVG
 // ═══════════════════════════════════════════════════════════════════════════
 
-function downloadSVG() {
-  const svgEl = document.getElementById('bubble-svg');
-  if (!svgEl || !svgEl.children.length) return;
+// Layout constants for the exported legend panel
+const SVG_LEGEND = { pad: 24, rowH: 22, titleH: 30, cols: 2 };
 
-  const data = buildNormalizedDiagramData();
-  if (!data.groups.length) return;
+// Build the legend <g> element appended below the exported chart.
+// Returns { legendG, legendH }.
+function buildLegendSvg(groups, W) {
+  const { pad, rowH, titleH, cols } = SVG_LEGEND;
+  const rows    = Math.ceil(groups.length / cols);
+  const legendH = titleH + rows * rowH + pad;
+  const ns      = 'http://www.w3.org/2000/svg';
 
-  const vb     = svgEl.viewBox.baseVal;
-  const W      = vb?.width  || svgEl.clientWidth  || 960;
-  const CHART_H = vb?.height || svgEl.clientHeight || 580;
-
-  const LEG_PAD   = 24;
-  const LEG_ROW_H = 22;
-  const LEG_TTL_H = 30;
-  const cols      = 2;
-  const rows      = Math.ceil(data.groups.length / cols);
-  const LEG_H     = LEG_TTL_H + rows * LEG_ROW_H + LEG_PAD;
-  const TOTAL_H   = CHART_H + LEG_H;
-
-  const ns  = 'http://www.w3.org/2000/svg';
-  const out = document.createElementNS(ns, 'svg');
-  out.setAttribute('xmlns', ns);
-  out.setAttribute('width',   W);
-  out.setAttribute('height',  TOTAL_H);
-  out.setAttribute('viewBox', `0 0 ${W} ${TOTAL_H}`);
-
-  // Embed Inter from Google Fonts
-  const style = document.createElementNS(ns, 'style');
-  style.textContent =
-    "@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap');" +
-    'text{font-family:"Open Sans",system-ui,sans-serif;}' +
-    '.bubble-label{font-weight:600;text-anchor:middle;dominant-baseline:middle;fill:white;pointer-events:none;}';
-  out.appendChild(style);
-
-  // Background
-  const bg = document.createElementNS(ns, 'rect');
-  bg.setAttribute('width', W); bg.setAttribute('height', TOTAL_H);
-  bg.setAttribute('fill', '#f6f7f8');
-  out.appendChild(bg);
-
-  // ── Bubble chart — clone live SVG contents, reset any zoom transform
-  const chartClone = svgEl.cloneNode(true);
-  const outerG = chartClone.querySelector('g');
-  if (outerG) outerG.removeAttribute('transform');
-  Array.from(chartClone.childNodes).forEach(n => out.appendChild(n.cloneNode(true)));
-
-  // ── Legend panel
   const legG = document.createElementNS(ns, 'g');
-  legG.setAttribute('transform', `translate(0,${CHART_H})`);
 
   const legBg = document.createElementNS(ns, 'rect');
-  legBg.setAttribute('width', W); legBg.setAttribute('height', LEG_H);
+  legBg.setAttribute('width', W); legBg.setAttribute('height', legendH);
   legBg.setAttribute('fill', 'rgba(255,255,255,0.76)');
   legG.appendChild(legBg);
 
@@ -1246,21 +1266,17 @@ function downloadSVG() {
   sep.setAttribute('stroke', 'rgba(0,0,0,0.07)'); sep.setAttribute('stroke-width', '1');
   legG.appendChild(sep);
 
-  // Section title
   const title = document.createElementNS(ns, 'text');
-  title.setAttribute('x', LEG_PAD); title.setAttribute('y', 18);
+  title.setAttribute('x', pad); title.setAttribute('y', 18);
   title.setAttribute('font-size', '9'); title.setAttribute('font-weight', '700');
   title.setAttribute('letter-spacing', '0.12em'); title.setAttribute('fill', '#999');
   title.textContent = 'AMENITY GROUPS';
   legG.appendChild(title);
 
-  // Legend rows — 2 columns
   const colW = W / cols;
-  data.groups.forEach((g, i) => {
-    const col = i % cols;
-    const row = Math.floor(i / cols);
-    const x   = col * colW + LEG_PAD;
-    const y   = LEG_TTL_H + row * LEG_ROW_H;
+  groups.forEach((g, i) => {
+    const x = (i % cols) * colW + pad;
+    const y = titleH + Math.floor(i / cols) * rowH;
 
     const swatch = document.createElementNS(ns, 'rect');
     swatch.setAttribute('x', x); swatch.setAttribute('y', y - 7);
@@ -1268,30 +1284,73 @@ function downloadSVG() {
     swatch.setAttribute('rx', 2); swatch.setAttribute('fill', g.color);
     legG.appendChild(swatch);
 
-    const row_t = document.createElementNS(ns, 'text');
-    row_t.setAttribute('x', x + 14); row_t.setAttribute('y', y + 1);
-    row_t.setAttribute('font-size', '11.5');
+    const rowText = document.createElementNS(ns, 'text');
+    rowText.setAttribute('x', x + 14); rowText.setAttribute('y', y + 1);
+    rowText.setAttribute('font-size', '11.5');
 
     const name = document.createElementNS(ns, 'tspan');
     name.setAttribute('font-weight', '700'); name.setAttribute('fill', '#1a1a1a');
     name.textContent = g.id;
-    row_t.appendChild(name);
+    rowText.appendChild(name);
 
     const stat = document.createElementNS(ns, 'tspan');
     stat.setAttribute('font-weight', '400'); stat.setAttribute('fill', '#666');
     stat.textContent = `  ${(g.total * 100).toFixed(1)}%  ·  avg ~${Math.round(g.total_count)}`;
-    row_t.appendChild(stat);
+    rowText.appendChild(stat);
 
-    legG.appendChild(row_t);
+    legG.appendChild(rowText);
   });
 
-  out.appendChild(legG);
+  return { legendG: legG, legendH };
+}
 
-  const blob = new Blob([new XMLSerializer().serializeToString(out)], { type: 'image/svg+xml;charset=utf-8' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob); a.download = 'amenity-ecosystem.svg';
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a);
+function downloadSVG() {
+  const svgEl = document.getElementById('bubble-svg');
+  if (!svgEl || !svgEl.children.length) return;
+
+  const data = buildNormalizedDiagramData();
+  if (!data.groups.length) return;
+
+  const vb      = svgEl.viewBox.baseVal;
+  const W       = vb?.width  || svgEl.clientWidth  || 960;
+  const CHART_H = vb?.height || svgEl.clientHeight || 580;
+
+  const { legendG, legendH } = buildLegendSvg(data.groups, W);
+  const TOTAL_H = CHART_H + legendH;
+
+  const ns  = 'http://www.w3.org/2000/svg';
+  const out = document.createElementNS(ns, 'svg');
+  out.setAttribute('xmlns', ns);
+  out.setAttribute('width',   W);
+  out.setAttribute('height',  TOTAL_H);
+  out.setAttribute('viewBox', `0 0 ${W} ${TOTAL_H}`);
+
+  // Standalone font + label styling so the file renders correctly outside the app
+  const style = document.createElementNS(ns, 'style');
+  style.textContent =
+    "@import url('https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;600;700&display=swap');" +
+    'text{font-family:"Open Sans",system-ui,sans-serif;}' +
+    '.bubble-label{font-weight:600;text-anchor:middle;dominant-baseline:middle;fill:white;pointer-events:none;}';
+  out.appendChild(style);
+
+  const bg = document.createElementNS(ns, 'rect');
+  bg.setAttribute('width', W); bg.setAttribute('height', TOTAL_H);
+  bg.setAttribute('fill', '#f6f7f8');
+  out.appendChild(bg);
+
+  // Bubble chart — clone live SVG contents, reset any zoom transform
+  const chartClone = svgEl.cloneNode(true);
+  const outerG = chartClone.querySelector('g');
+  if (outerG) outerG.removeAttribute('transform');
+  Array.from(chartClone.childNodes).forEach(n => out.appendChild(n.cloneNode(true)));
+
+  legendG.setAttribute('transform', `translate(0,${CHART_H})`);
+  out.appendChild(legendG);
+
+  triggerDownload(
+    new XMLSerializer().serializeToString(out),
+    'amenity-ecosystem.svg', 'image/svg+xml;charset=utf-8'
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1315,11 +1374,8 @@ function downloadAmenitiesGeoJSON() {
     },
   }));
 
-  const geojson = JSON.stringify({ type: 'FeatureCollection', features }, null, 2);
-  const blob = new Blob([geojson], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url; a.download = 'amenities.geojson';
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a); URL.revokeObjectURL(url);
+  triggerDownload(
+    JSON.stringify({ type: 'FeatureCollection', features }, null, 2),
+    'amenities.geojson', 'application/json'
+  );
 }

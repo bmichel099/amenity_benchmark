@@ -21,6 +21,18 @@ const POP_PALETTE = ['#0072B2','#D55E00','#009E73','#CC79A7','#E69F00',
 
 const nf = n => Number(n).toLocaleString();
 
+// People per km², or null when either value is missing. Single source for the
+// results panel and both download formats.
+const densityOf = (population, areaKm2) =>
+  (population != null && areaKm2 > 0) ? Math.round(population / areaKm2) : null;
+
+// Toggle the right-hand panel between its three mutually-exclusive states.
+function setPopPanel(panel) {
+  $('pop-empty').style.display   = panel === 'empty'   ? '' : 'none';
+  $('pop-loading').style.display = panel === 'loading' ? '' : 'none';
+  $('pop-content').style.display = panel === 'content' ? '' : 'none';
+}
+
 // ── Boot ────────────────────────────────────────────────────────────────────
 window.addEventListener('DOMContentLoaded', () => {
   initTabs();
@@ -87,7 +99,7 @@ function initPopMap() {
     attribution:
       '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>' +
       ' · pop. © <a href="https://human-settlement.emergency.copernicus.eu">GHSL</a>',
-    subdomains: 'abcd', maxZoom: 19,
+    subdomains: 'abcd', maxZoom: TILE_MAX_ZOOM,
   }).addTo(popState.map);
 
   // Live radius readout while drawing / editing circle buffers
@@ -161,27 +173,6 @@ function bindPopEvents() {
     if (!e.target.closest('#pop-ctx-menu')) $('pop-ctx-menu').style.display = 'none';
   });
 
-  // Name modal (draw polygon / circle)
-  $('pop-name-confirm').addEventListener('click', () => {
-    const next = popState.features.length + 1;
-    const name = $('pop-name-input').value.trim() || `Area ${next}`;
-    $('pop-name-modal').style.display = 'none';
-    const cb = _popNameOnConfirm;
-    _popNameOnConfirm = _popNameOnCancel = null;
-    if (cb) cb(name);
-  });
-  $('pop-name-cancel').addEventListener('click', () => {
-    $('pop-name-modal').style.display = 'none';
-    const cb = _popNameOnCancel;
-    _popNameOnConfirm = _popNameOnCancel = null;
-    if (cb) cb();
-    setStatus('idle', 'Draw cancelled.');
-  });
-  $('pop-name-input').addEventListener('keydown', e => {
-    if (e.key === 'Enter')  $('pop-name-confirm').click();
-    if (e.key === 'Escape') $('pop-name-cancel').click();
-  });
-
   // Buffer-distance modal
   $('buffer-confirm').addEventListener('click', () => {
     const km = parseFloat($('buffer-input').value);
@@ -235,19 +226,20 @@ function popDrawCircle() {
   popState.map.editTools.startCircle();
 }
 
-// Ask the user to name a freshly-drawn area, pre-filling the next default
-// nomenclature ("Area 1", "Buffer 1", …). onConfirm(name) adds the feature;
-// onCancel() discards the temporary drawing layer.
-let _popNameOnConfirm = null;
-let _popNameOnCancel  = null;
+// Ask the user to name a freshly-drawn area via the shared name modal,
+// pre-filling the next default nomenclature ("Area 1", "Buffer 1", …).
+// onConfirm(name) adds the feature; onCancel() discards the drawing layer.
 function promptPopName(prefix, onConfirm, onCancel) {
-  _popNameOnConfirm = onConfirm;
-  _popNameOnCancel  = onCancel;
-  const next  = popState.features.length + 1;
-  const input = $('pop-name-input');
-  input.value = `${prefix} ${next}`;
-  $('pop-name-modal').style.display = 'flex';
-  setTimeout(() => { input.focus(); input.select(); }, 50);
+  const fallback = `${prefix} ${popState.features.length + 1}`;
+  promptForName({
+    overline: 'New area', title: 'Name this area', confirmLabel: 'Add area',
+    defaultValue: fallback,
+    onConfirm: name => onConfirm(name || fallback),
+    onCancel: () => {
+      if (onCancel) onCancel();
+      setStatus('idle', 'Draw cancelled.');
+    },
+  });
 }
 
 function finishDraw() {
@@ -364,7 +356,7 @@ function addPopFeature({ type, layer, geometry, buffer_km, name }) {
     population: null, area_km2: null,
   };
 
-  layer.bindTooltip(feat.name, { permanent: true, direction: 'center', className: 'polygon-label' });
+  bindShapeLabel(layer, feat.name);
 
   // Circle buffers stay editable so radius can be dragged afterwards
   if (type === 'circle' && layer.enableEdit) {
@@ -419,10 +411,7 @@ function renamePopFeature(feat, newName) {
   feat.name = newName;
   const chip = document.querySelector(`#pop-bar .location-chip[data-id="${feat._id}"]`);
   if (chip) chip.querySelector('.chip-name').textContent = newName;
-  if (feat.layer) {
-    feat.layer.unbindTooltip();
-    feat.layer.bindTooltip(newName, { permanent: true, direction: 'center', className: 'polygon-label' });
-  }
+  if (feat.layer) bindShapeLabel(feat.layer, newName);
   // Re-render the results panel so the renamed feature shows its new label
   if (feat.population != null) {
     const results = popState.features
@@ -437,22 +426,16 @@ function addPopChip(feat) {
   const bar = $('pop-bar');
   bar.classList.add('visible');
 
-  const chip = document.createElement('div');
-  chip.className = 'location-chip selected';
-  chip.dataset.id = feat._id;
-  chip.innerHTML = `
-    <span class="chip-dot" style="background:${feat.color}"></span>
-    <span class="chip-name">${feat.name}</span>
-    <span class="chip-remove" title="Remove">×</span>
-  `;
-  chip.querySelector('.chip-remove').addEventListener('click', e => {
-    e.stopPropagation(); removePopFeature(feat._id);
+  createChip(bar, {
+    id:       feat._id,
+    name:     feat.name,
+    dotColor: feat.color,
+    onRemove: () => removePopFeature(feat._id),
+    onClick:  () => {
+      if (feat.layer.getBounds)      popState.map.fitBounds(feat.layer.getBounds().pad(0.4));
+      else if (feat.layer.getLatLng) popState.map.panTo(feat.layer.getLatLng());
+    },
   });
-  chip.addEventListener('click', () => {
-    if (feat.layer.getBounds)      popState.map.fitBounds(feat.layer.getBounds().pad(0.4));
-    else if (feat.layer.getLatLng) popState.map.panTo(feat.layer.getLatLng());
-  });
-  bar.appendChild(chip);
 }
 
 function removePopFeature(id) {
@@ -478,7 +461,7 @@ function fitPopBounds() {
   const layers = popState.features.map(f => f.layer);
   if (!layers.length) return;
   try {
-    popState.map.fitBounds(L.featureGroup(layers).getBounds().pad(0.2), { maxZoom: 13 });
+    popState.map.fitBounds(L.featureGroup(layers).getBounds().pad(0.2), { maxZoom: FIT_MAX_ZOOM });
   } catch { /* single point */ }
 }
 
@@ -488,42 +471,45 @@ function popReset() {
   popState.paletteIdx = 0;
   $('pop-bar').innerHTML = '';
   $('pop-bar').classList.remove('visible');
-  $('pop-stats').style.display   = 'none';
-  $('pop-content').style.display = 'none';
-  $('pop-loading').style.display = 'none';
-  $('pop-empty').style.display   = '';
+  $('pop-stats').style.display = 'none';
+  setPopPanel('empty');
   showPopButtons();
   if (typeof updateCount === 'function') updateCount();
   setStatus('idle', 'Cleared.');
 }
 
 // ── Estimate ────────────────────────────────────────────────────────────────
+
+// Pure data fetch: POST the features to /api/population and return the parsed
+// results, throwing a readable Error on any failure. No DOM access.
+async function requestEstimate(features) {
+  const payload = {
+    features: features.map(f => ({
+      id: f._id, name: f.name, geometry: f.geometry, buffer_km: f.buffer_km,
+    })),
+  };
+  const res = await fetch('/api/population', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || res.statusText);
+  }
+  return res.json();
+}
+
 async function popEstimate() {
   if (!popState.features.length) return;
 
-  $('pop-empty').style.display   = 'none';
-  $('pop-content').style.display = 'none';
-  $('pop-loading').style.display = '';
+  setPopPanel('loading');
   $('pop-loading-detail').textContent = `Summing GHSL population over ${popState.features.length} area(s)…`;
   $('pop-estimate-btn').disabled = true;
   setStatus('loading', 'Estimating population from GHSL raster…');
 
   try {
-    const payload = {
-      features: popState.features.map(f => ({
-        id: f._id, name: f.name, geometry: f.geometry, buffer_km: f.buffer_km,
-      })),
-    };
-    const res = await fetch('/api/population', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || res.statusText);
-    }
-    const data = await res.json();
+    const data = await requestEstimate(popState.features);
 
     for (const r of data.results) {
       const f = popState.features.find(x => x._id === r.id);
@@ -532,8 +518,7 @@ async function popEstimate() {
     renderPopResults(data);
     setStatus('idle', `Total population ≈ ${nf(data.total)} across ${data.results.length} area(s).`);
   } catch (err) {
-    $('pop-loading').style.display = 'none';
-    $('pop-empty').style.display   = '';
+    setPopPanel('empty');
     $('pop-empty').querySelector('.empty-text').innerHTML =
       `<strong>Estimate failed</strong><br>${err.message}`;
     setStatus('error', `Population estimate failed: ${err.message}`);
@@ -544,8 +529,7 @@ async function popEstimate() {
 }
 
 function renderPopResults(data) {
-  $('pop-loading').style.display  = 'none';
-  $('pop-content').style.display  = '';
+  setPopPanel('content');
 
   $('pop-total').textContent = `Total ≈ ${nf(data.total)} people`;
   $('pop-stats').style.display = '';
@@ -559,7 +543,7 @@ function renderPopResults(data) {
   for (const r of sorted) {
     const feat    = popState.features.find(f => f._id === r.id);
     const color   = feat ? feat.color : '#888';
-    const density = r.area_km2 > 0 ? Math.round(r.population / r.area_km2) : 0;
+    const density = densityOf(r.population, r.area_km2) ?? 0;
     const row = document.createElement('div');
     row.className = 'pop-row';
     row.innerHTML = `
@@ -585,11 +569,10 @@ function popDownloadGeoJSON() {
       buffer_km:  f.buffer_km,
       population: f.population,
       area_km2:   f.area_km2,
-      density_per_km2: f.area_km2 > 0 && f.population != null
-        ? Math.round(f.population / f.area_km2) : null,
+      density_per_km2: densityOf(f.population, f.area_km2),
     },
   }));
-  _triggerDownload(
+  triggerDownload(
     JSON.stringify({ type: 'FeatureCollection', features }, null, 2),
     'population-estimate.geojson', 'application/json'
   );
@@ -599,18 +582,16 @@ function popDownloadCSV() {
   if (!popState.features.length) return;
   const rows = [['name', 'population', 'area_km2', 'density_per_km2', 'buffer_km', 'type']];
   for (const f of popState.features) {
-    const density = (f.population != null && f.area_km2 > 0)
-      ? Math.round(f.population / f.area_km2) : '';
     rows.push([
       `"${(f.name || '').replace(/"/g, '""')}"`,
       f.population ?? '',
       f.area_km2   ?? '',
-      density,
+      densityOf(f.population, f.area_km2) ?? '',
       f.buffer_km  ?? '',
       f.type,
     ]);
   }
-  _triggerDownload(
+  triggerDownload(
     rows.map(r => r.join(',')).join('\n'),
     'population-estimate.csv', 'text/csv;charset=utf-8;'
   );
@@ -637,20 +618,9 @@ async function popDownloadSHP() {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
       throw new Error(err.detail || res.statusText);
     }
-    const blob = await res.blob();
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'population-estimate.zip';
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    triggerDownload(await res.blob(), 'population-estimate.zip');
     setStatus('idle', 'Shapefile downloaded.');
   } catch (err) {
     setStatus('error', `Shapefile export failed: ${err.message}`);
   }
-}
-
-function _triggerDownload(content, filename, mime) {
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(new Blob([content], { type: mime }));
-  a.download = filename;
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
 }
