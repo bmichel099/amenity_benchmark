@@ -273,14 +273,7 @@ async function onFileChosen(e) {
 
   setStatus('loading', `Parsing ${file.name}…`);
   try {
-    const fd = new FormData();
-    fd.append('file', file);
-    const res = await fetch('/api/shapefile', { method: 'POST', body: fd });
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || res.statusText);
-    }
-    const data = await res.json();
+    const data = await uploadShapefile(file);
 
     if (data.geometry_type === 'point') {
       popState.pendingPoints = data.geojson;
@@ -299,14 +292,7 @@ async function onFileChosen(e) {
   }
 }
 
-function featureName(props, i, prefix) {
-  if (props) {
-    for (const k of ['name', 'NAME', 'Name', 'label', 'id', 'ID']) {
-      if (props[k] != null && String(props[k]).trim()) return String(props[k]);
-    }
-  }
-  return `${prefix} ${i + 1}`;
-}
+// featureName() and uploadShapefile() live in app.js — shared with the amenity tool.
 
 function addGeojsonPolygons(geojson) {
   const feats = geojson.features || [];

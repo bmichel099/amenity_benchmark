@@ -110,6 +110,31 @@ function bindShapeLabel(layer, name) {
   layer.bindTooltip(name, { permanent: true, direction: 'center', className: 'polygon-label', sticky: false });
 }
 
+// POST an uploaded file to the shapefile parser and return the parsed
+// response ({ geojson, geometry_type, feature_count }), throwing a readable
+// Error on failure. Shared by both tools' upload buttons.
+async function uploadShapefile(file) {
+  const fd = new FormData();
+  fd.append('file', file);
+  const res = await fetch('/api/shapefile', { method: 'POST', body: fd });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }));
+    throw new Error(err.detail || res.statusText);
+  }
+  return res.json();
+}
+
+// Best display name for an uploaded feature: first name-like attribute,
+// falling back to "<prefix> <n>". Shared by both tools.
+function featureName(props, i, prefix) {
+  if (props) {
+    for (const k of ['name', 'NAME', 'Name', 'label', 'id', 'ID']) {
+      if (props[k] != null && String(props[k]).trim()) return String(props[k]);
+    }
+  }
+  return `${prefix} ${i + 1}`;
+}
+
 // Build a location/area chip and append it to `bar`. Both tools share this so
 // chips stay visually and behaviourally identical.
 function createChip(bar, { id, name, country, loading, dotColor, onRemove, onClick }) {
@@ -263,6 +288,8 @@ function bindEvents() {
   $('add-ways-btn').addEventListener('click',      () => handleOsmAdd('way'));
   $('draw-polygon-btn').addEventListener('click',  handleDrawPolygon);
   $('draw-cancel-btn').addEventListener('click',   cancelDraw);
+  $('amenity-upload-btn').addEventListener('click', () => $('amenity-file-input').click());
+  $('amenity-file-input').addEventListener('change', onAmenityFileChosen);
 
   $('analyze-btn').addEventListener('click', analyzeAmenities);
   $('reset-btn').addEventListener('click',   resetAll);
@@ -327,7 +354,7 @@ function setMode(mode) {
     osm:  ['e.g. 62149, 5750005, 7444  (comma-separated IDs)',
            'Paste OpenStreetMap relation or way IDs, then click + Relations or + Ways.'],
     draw: ['',
-           'Click “Draw polygon”, then click the map to place vertices. Double-click to finish, then name your area.'],
+           'Click “Draw polygon” to sketch a boundary (double-click to finish), or upload a zipped shapefile of polygons.'],
   };
   if (mode !== 'draw') $('search-input').placeholder = hints[mode][0];
   $('search-hint').textContent = hints[mode][1];
@@ -431,6 +458,62 @@ function addDrawnPolygon(layer, name) {
   $('draw-polygon-btn').disabled     = false;
   $('draw-cancel-btn').style.display = 'none';
   setStatus('idle', `"${name}" added — click Analyse to fetch amenities.`);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SHAPEFILE UPLOAD — boundary polygons become locations, ready to Analyse
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function onAmenityFileChosen(e) {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+
+  setStatus('loading', `Parsing ${file.name}…`);
+  try {
+    const data = await uploadShapefile(file);
+    if (data.geometry_type === 'point') {
+      throw new Error(
+        'This layer contains point features. The Amenity Ecosystem tool needs polygon ' +
+        'boundaries — use the Population Estimate tool to buffer points into areas.'
+      );
+    }
+    const added = addUploadedBoundaries(data.geojson);
+    if (!added) throw new Error('No polygon features found in this file.');
+    setStatus('idle', `${added} boundar${added === 1 ? 'y' : 'ies'} added — click Analyse to fetch amenities.`);
+  } catch (err) {
+    setStatus('error', `Shapefile error: ${err.message}`);
+    showAlert(err.message, 'Shapefile Upload Error');
+  }
+}
+
+// Turn each uploaded polygon into a ready location (same shape as a hand-drawn
+// boundary — Overpass queries it with a poly: filter). Returns the count added.
+function addUploadedBoundaries(geojson) {
+  const feats = (geojson.features || []).filter(f =>
+    f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'));
+
+  feats.forEach((f, i) => {
+    const b    = L.geoJSON(f.geometry).getBounds();
+    const name = featureName(f.properties, i, 'Area');
+    const loc = {
+      _id:          crypto.randomUUID(),
+      name,
+      display_name: name,
+      country:      '',
+      osm_id:       null,
+      osm_type:     null,
+      geojson:      f.geometry,
+      bbox:         [b.getSouth(), b.getNorth(), b.getWest(), b.getEast()],
+      edited:       true,   // tells fetchOverpass to use poly: filter
+      status:       'ready',
+      selected:     true,
+    };
+    addChip(loc, 'ready');
+    showBoundary(loc._id, loc.geojson, name);
+  });
+
+  return feats.length;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -822,15 +905,15 @@ function showAmenityDotsPerLocation(amenities, selected) {
 // OVERPASS
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Convert a GeoJSON Polygon/MultiPolygon geometry to an Overpass poly: string
-// ("lat lon lat lon …" — outer ring only, closing point stripped)
-function geojsonToPoly(geojson) {
-  if (!geojson) return null;
-  const ring = geojson.type === 'Polygon'      ? geojson.coordinates[0]
-             : geojson.type === 'MultiPolygon' ? geojson.coordinates[0][0]
-             : null;
-  if (!ring) return null;
-  return ring.slice(0, -1).map(([lon, lat]) => `${lat} ${lon}`).join(' ');
+// Convert a GeoJSON Polygon/MultiPolygon geometry to Overpass poly: strings
+// ("lat lon lat lon …" — outer rings only, closing points stripped).
+// A MultiPolygon yields one string per part so no part is silently dropped.
+function geojsonToPolys(geojson) {
+  if (!geojson) return [];
+  const ringToStr = ring => ring.slice(0, -1).map(([lon, lat]) => `${lat} ${lon}`).join(' ');
+  if (geojson.type === 'Polygon')      return [ringToStr(geojson.coordinates[0])];
+  if (geojson.type === 'MultiPolygon') return geojson.coordinates.map(part => ringToStr(part[0]));
+  return [];
 }
 
 // Build the Overpass QL query string for a set of locations. Pure — no network.
@@ -859,12 +942,12 @@ function buildOverpassQuery(locations) {
     );
   }
   for (const loc of polyLocs) {
-    const poly = geojsonToPoly(loc.geojson);
-    if (!poly) continue;
-    parts.push(
-      `  node["amenity"](poly:"${poly}")`, `  way["amenity"](poly:"${poly}")`,
-      `  node["shop"](poly:"${poly}")`,    `  way["shop"](poly:"${poly}")`,
-    );
+    for (const poly of geojsonToPolys(loc.geojson)) {
+      parts.push(
+        `  node["amenity"](poly:"${poly}")`, `  way["amenity"](poly:"${poly}")`,
+        `  node["shop"](poly:"${poly}")`,    `  way["shop"](poly:"${poly}")`,
+      );
+    }
   }
   query += `(\n${parts.join(';\n')};\n);\nout center tags;`;
   return query;
@@ -933,26 +1016,30 @@ function buildNormalizedDiagramData() {
   const activeLocs = perLoc.filter(l => l.total > 0);
   const N = activeLocs.length || 1;
 
-  const avgProp = {}, avgCount = {};
+  // Average share of each amenity type across locations — every location
+  // weighs equally regardless of how many amenities it contains.
+  const avgProp = {};
   for (const loc of activeLocs) {
     for (const [type, count] of Object.entries(loc.counts)) {
-      avgProp[type]  = (avgProp[type]  || 0) + count / loc.total;
-      avgCount[type] = (avgCount[type] || 0) + count;
+      avgProp[type] = (avgProp[type] || 0) + count / loc.total;
     }
   }
-  for (const t of Object.keys(avgProp)) {
-    avgProp[t]  /= N;
-    avgCount[t] /= N;
-  }
+  for (const t of Object.keys(avgProp)) avgProp[t] /= N;
 
   const totalProp = Object.values(avgProp).reduce((s, v) => s + v, 0) || 1;
+
+  // Average amenities per location. The "avg ~N" counts shown everywhere are
+  // derived from the normalised shares (proportion × avgTotal) so percentages
+  // and counts always agree exactly.
+  const avgTotal = activeLocs.reduce((s, l) => s + l.total, 0) / N;
 
   const groups = [];
   for (const g of state.groups) {
     const items = [];
     for (const item of g.items) {
       if (avgProp[item]) {
-        items.push({ id: item, count: avgCount[item], proportion: avgProp[item] / totalProp });
+        const proportion = avgProp[item] / totalProp;
+        items.push({ id: item, count: proportion * avgTotal, proportion });
       }
     }
     if (!items.length) continue;
@@ -966,8 +1053,7 @@ function buildNormalizedDiagramData() {
   }
   groups.sort((a, b) => b.total - a.total);
 
-  const total_amenities = Object.values(avgCount).reduce((s, v) => s + v, 0);
-  return { groups, total_amenities };
+  return { groups, total_amenities: avgTotal };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

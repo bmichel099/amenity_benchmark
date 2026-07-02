@@ -14,7 +14,7 @@
   <link href="https://fonts.googleapis.com/css2?family=Open+Sans:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet" />
 
   <!-- Cache-busting: bump all three ?v= numbers together (here + the two scripts at the bottom) -->
-  <link rel="stylesheet" href="style.css?v=16" />
+  <link rel="stylesheet" href="style.css?v=17" />
 </head>
 
 <body>
@@ -78,6 +78,8 @@
     <!-- Draw mode controls -->
     <div id="draw-controls" style="display:none">
       <button id="draw-polygon-btn" class="btn btn-secondary" title="Start drawing a polygon on the map">✎ Draw polygon</button>
+      <button id="amenity-upload-btn" class="btn btn-secondary" title="Upload a zipped shapefile (.zip) of boundary polygons">⬆ Upload shapefile</button>
+      <input  id="amenity-file-input" type="file" accept=".zip,.geojson,.json" style="display:none" />
       <button id="draw-cancel-btn"  class="btn btn-ghost" style="display:none" title="Cancel current drawing">✕ Cancel</button>
     </div>
 
@@ -283,11 +285,12 @@
            groups; the app pulls every shop &amp; amenity from OpenStreetMap inside each
            boundary and renders a normalised bubble chart so you can compare the
            ecosystem across locations.</p>
-        <h4>Three ways to add locations</h4>
+        <h4>Four ways to add locations</h4>
         <ul class="info-list">
           <li><strong>AI Search</strong> — <span>describe a place type (e.g. “boutique design district”) and pick how many benchmarks to generate.</span></li>
           <li><strong>OSM IDs</strong> — <span>paste specific OpenStreetMap relation or way IDs.</span></li>
           <li><strong>Draw</strong> — <span>draw your own boundary polygon and name it.</span></li>
+          <li><strong>Upload</strong> — <span>a zipped shapefile or GeoJSON of boundary polygons (in Draw mode).</span></li>
         </ul>
         <h4>Tips</h4>
         <ul class="info-list">
@@ -349,7 +352,7 @@
     </div>
   </div>
 
-  <script src="app.js?v=16"></script>
-  <script src="population.js?v=16"></script>
+  <script src="app.js?v=17"></script>
+  <script src="population.js?v=17"></script>
 </body>
 </html>
