@@ -95,12 +95,8 @@ function initPopMap() {
   popState.map = L.map('pop-map', {
     worldCopyJump: true, minZoom: 1, wheelPxPerZoomLevel: 40, editable: true,
   });
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    attribution:
-      '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>' +
-      ' · pop. © <a href="https://human-settlement.emergency.copernicus.eu">GHSL</a>',
-    subdomains: 'abcd', maxZoom: TILE_MAX_ZOOM,
-  }).addTo(popState.map);
+  addBasemap(popState.map,
+    ' · pop. © <a href="https://human-settlement.emergency.copernicus.eu">GHSL</a>');
 
   // Live radius readout while drawing / editing circle buffers
   popState.map.on('editable:drawing:move editable:vertex:drag editable:drag', () => {

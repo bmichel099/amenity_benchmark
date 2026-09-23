@@ -48,6 +48,9 @@ app = FastAPI(title="Amenity Benchmark")
 
 GOOGLE_AI_KEY      = os.getenv("GOOGLE_AI_API_KEY", "")
 GEMINI_MODEL       = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+# CARTO basemap tiles need a key since Aug 2026. It ends up in tile URLs in the
+# browser anyway, but is kept out of git and set on Render like the other keys.
+CARTO_BASEMAP_KEY  = os.getenv("CARTO_BASEMAP_KEY", "")
 GEMINI_TEMPERATURE = 0.4
 EXPORT_FILENAME    = "population_estimate.zip"
 
@@ -248,6 +251,12 @@ async def suggest(req: SuggestRequest) -> dict:
 async def defaults() -> dict:
     """Return the fallback group schema for non-AI modes."""
     return {"groups": DEFAULT_GROUPS}
+
+
+@app.get("/api/config")
+async def client_config() -> dict:
+    """Public, browser-side settings (the basemap key is visible in tile URLs regardless)."""
+    return {"carto_basemap_key": CARTO_BASEMAP_KEY}
 
 
 @app.get("/api/health")

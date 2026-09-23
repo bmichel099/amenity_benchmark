@@ -258,12 +258,32 @@ function fitWorldView(map) {
   map.setView([25, 0], zoom, { animate: false });
 }
 
+// CARTO key comes from the server's CARTO_BASEMAP_KEY env var — never hard-code it.
+// Fetched once and shared by both maps.
+const basemapKeyPromise = fetch('/api/config')
+  .then(r => (r.ok ? r.json() : {}))
+  .then(cfg => cfg.carto_basemap_key || '')
+  .catch(() => '');
+
+// Voyager when a key is configured; otherwise plain OSM tiles, since keyless
+// CARTO tiles are covered in an "API KEY REQUIRED" watermark.
+function addBasemap(map, extraAttribution = '') {
+  basemapKeyPromise.then(key => {
+    const url = key
+      ? `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png?key=${encodeURIComponent(key)}`
+      : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png';
+    const attribution = key
+      ? '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>'
+      : '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> contributors';
+    L.tileLayer(url, { attribution: attribution + extraAttribution, maxZoom: TILE_MAX_ZOOM })
+      .addTo(map)
+      .bringToBack();
+  });
+}
+
 function initMap() {
   state.map = L.map('map', { worldCopyJump: true, minZoom: 1, wheelPxPerZoomLevel: 40, editable: true });
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
-    attribution: '© <a href="https://openstreetmap.org">OSM</a> © <a href="https://carto.com">CARTO</a>',
-    subdomains: 'abcd', maxZoom: TILE_MAX_ZOOM,
-  }).addTo(state.map);
+  addBasemap(state.map);
 
   // Wait one frame so the flex container has its final pixel dimensions before
   // fitting — prevents the grey-at-top bug on large / HiDPI displays.
